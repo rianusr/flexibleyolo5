@@ -127,3 +127,18 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+## caches
+models/backbones/__pycache__/*
+models/heads/__pycache__/*
+models/__pycache__/*
+utils/__pycache__/*
+tactics/__pycache__/*
+__pycache__/*
+
+## runs
+runs/*
+
+## experiments
+data/idt/*
+
