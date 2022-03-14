@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from loguru import logger
-from utils.general import LOGGER
+from tactics.general import LOGGER
 from .bdp import BalancedDataParallel
 
 try:
@@ -322,20 +322,6 @@ class ModelEMA:
         copy_attr(self.ema, model, include, exclude)
 
 
-def model_summary(model, input_size, show_details=False):
-    if isinstance(input_size, int):
-        input_size = (input_size, input_size)
-    try:
-        from ptflops import get_model_complexity_info
-        logger.info('== get_model_complexity_info by ptflops ==')
-        macs, params = get_model_complexity_info(model, (3, input_size[1], input_size[0]),
-            as_strings=True, print_per_layer_stat=show_details, verbose=show_details
-        )
-        logger.info(f'=> FLOPs: {macs:<8}, Trainable params: {params:<8}')
-    except Exception:
-        logger.error('=> error when run get_model_complexity_info')
-
-
 def state_dict_convert_yolo5_2_flexible(yolo5_sd):
     bkbo_keys = ['model.0.', 'model.1.', 'model.2.', 'model.3.', 'model.4.', 'model.5.', 'model.6.', 'model.7.', 'model.8.', 'model.9.']
     convert_sd = {}
@@ -380,3 +366,24 @@ def time_synchronized():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
     return time.time()
+
+
+def model_summary(model, input_size, show_details=False):
+    if isinstance(input_size, int):
+        input_size = (input_size, input_size)
+    try:
+        from ptflops import get_model_complexity_info
+        logger.info('== get_model_complexity_info by ptflops ==')
+        macs, params = get_model_complexity_info(model, (3, input_size[1], input_size[0]),
+            as_strings=True, print_per_layer_stat=show_details, verbose=show_details
+        )
+        logger.info(f'=> FLOPs: {macs:<8}, Trainable params: {params:<8}')
+    except Exception:
+        logger.error('=> error when run get_model_complexity_info')
+        
+
+def cal_flops(model, input_size, batch_size):
+    input_data = torch.randn(batch_size, 3, input_size, input_size)
+    from thop import profile
+    flops, params = profile(model, inputs=(input_data,))
+    return flops, params

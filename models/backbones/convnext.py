@@ -4,48 +4,27 @@
 
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
+import os, sys
 
-import os
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import trunc_normal_, DropPath
 
-# sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
-# from utils.torch_utils import model_summary
-# from models.common import Conv
+sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
+from models.common import Conv
 
 PARAMS = {
     ##       L                              D 
-    't': {'depths': [3, 3, 9,  3], 'dims': [96,  192, 384,  768]},
-    's': {'depths': [3, 3, 27, 3], 'dims': [96,  192, 384,  768]},
-    'b': {'depths': [3, 3, 27, 3], 'dims': [128, 256, 512,  1024]},
-    'l': {'depths': [3, 3, 27, 3], 'dims': [192, 384, 768,  1536]},
-    'xl':{'depths': [3, 3, 27, 3], 'dims': [256, 512, 1024, 2048]},
+    'p': {'depths': [3, 3, 9,  3], 'dims': [32,  64,  128,  256]},      ## pico 
+    'n': {'depths': [3, 3, 9,  3], 'dims': [64,  96,  192,  384]},      ## nano 
+    'm': {'depths': [3, 3, 9,  3], 'dims': [64,  128, 256,  512]},      ## micro
+    't': {'depths': [3, 3, 9,  3], 'dims': [96,  192, 384,  768]},      ## tiny
+    's': {'depths': [3, 3, 27, 3], 'dims': [96,  192, 384,  768]},      ## small
+    'l': {'depths': [3, 3, 27, 3], 'dims': [128, 256, 512,  1024]},     ## large
+    'h': {'depths': [3, 3, 27, 3], 'dims': [192, 384, 768,  1536]},     ## huge
+    'g': {'depths': [3, 3, 27, 3], 'dims': [256, 512, 1024, 2048]},     ## giant
 }
-
-
-def autopad(k, p=None):  # kernel, padding
-    # Pad to 'same'
-    if p is None:
-        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
-    return p
-
-
-class Conv(nn.Module):
-    # Standard convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super().__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
-
-    def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
-
-    def forward_fuse(self, x):
-        return self.act(self.conv(x))
 
 
 class Block(nn.Module):
@@ -172,7 +151,8 @@ class ConvNeXtBackbone(nn.Module):
         for i in range(4):
             x = self.downsample_layers[i](x)
             x = self.stages[i](x)
-            if i in [1, 2, 3]:
+            # fpn_feats.append(x)
+            if i in [0, 1, 2]:          ## 取80、40、20特征图，for_yolox
                 fpn_feats.append(x)
         return fpn_feats
 
@@ -181,6 +161,7 @@ if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
     img = torch.randn(1, 3, 640, 640)
-    model = ConvNeXtBackbone(variant='s')
+    model = ConvNeXtBackbone(variant='p')
     fpn_feats = model(img)
     print(*[v.shape for v in fpn_feats], sep='\n')
+    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

@@ -63,7 +63,7 @@ download: |
   from pycocotools.coco import COCO
   from tqdm import tqdm
 
-  from utils.general import Path, download, np, xyxy2xywhn
+  from tactics.general import Path, download, np, xyxy2xywhn
 
   # Make Directories
   dir = Path(yaml['path'])  # dataset root dir

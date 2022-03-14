@@ -3,34 +3,37 @@
 General utils
 """
 
-import contextlib
-import glob
-import logging
-import math
 import os
-import platform
-import random
 import re
+import cv2
+import math
+import time
+import glob
+import yaml
 import shutil
 import signal
-import time
 import urllib
-from itertools import repeat
-from multiprocessing.pool import ThreadPool
-from pathlib import Path
-from subprocess import check_output
-from zipfile import ZipFile
-
-import cv2
+import random
+import logging
+import platform
+import contextlib
 import numpy as np
 import pandas as pd
+from pathlib import Path
+from zipfile import ZipFile
 import pkg_resources as pkg
+from itertools import repeat
+from subprocess import check_output
+from multiprocessing.pool import ThreadPool
+
+from loguru import logger
+
 import torch
 import torchvision
-import yaml
 
-from utils.downloads import gsutil_getsize
-from utils.metrics import box_iou, fitness
+from tactics.downloads import gsutil_getsize
+from tactics.metrics import box_iou, fitness
+from .labels2jsons import Labels2Jsons
 
 # Settings
 FILE = Path(__file__).resolve()
@@ -426,8 +429,37 @@ def check_dataset(data, autodownload=True):
                 print(f"Dataset autodownload {f'success, saved to {root}' if r in (0, None) else 'failure'}\n")
             else:
                 raise Exception('Dataset not found.')
-
+            
     return data  # dictionary
+
+
+def auto_convert_label_2_json(train_image_path, val_image_path, im_name='images'):
+    train_label_path = train_image_path.replace(f'/{im_name}/', '/labels/')
+    val_label_path   = val_image_path.replace(f'/{im_name}/', '/labels/')
+    assert os.path.exists(train_label_path) and  os.path.exists(val_label_path)
+    while (True):
+        print('''
+            You are using yolox_head for training, but not find coco format json files:
+            Whether to convert labels to jsons automatically. 
+            Y: convert automatically. N: exit the prgream.'''
+        )
+        content = input("Input(Y/N):")
+        if content.strip() == "Y" or content.strip(
+        ) == "y" or content.strip() == "yes" or content.strip(
+        ) == "Yes":
+            l2j_t = Labels2Jsons(train_label_path, train_image_path, True)
+            l2j_t()
+            l2j_v = Labels2Jsons(val_label_path, val_image_path, False)
+            l2j_v()
+            print("lables convert to jsons done!")
+            break
+        elif content.strip() == "N" or content.strip(
+        ) == "n" or content.strip() == "no" or content.strip(
+        ) == "No":
+            print("Exit the program")
+            exit(1)
+        else:
+            print("Not regular input, please input again")
 
 
 def url2file(url):
@@ -759,7 +791,9 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
     return output
 
 
-def strip_optimizer(f='best.pt', s=''):  # from utils.general import *; strip_optimizer()
+def strip_optimizer(f='best.pt', s=''):  # from tactics.general import *; strip_optimizer()
+    if not os.path.exists(f):
+        return 
     # Strip optimizer from 'f' to finalize training, optionally save as 's'
     x = torch.load(str(f), map_location=torch.device('cpu'))
     if x.get('ema'):

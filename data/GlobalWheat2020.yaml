@@ -32,7 +32,7 @@ names: ['wheat_head']  # class names
 
 # Download script/URL (optional) ---------------------------------------------------------------------------------------
 download: |
-  from utils.general import download, Path
+  from tactics.general import download, Path
 
   # Download
   dir = Path(yaml['path'])  # dataset root dir

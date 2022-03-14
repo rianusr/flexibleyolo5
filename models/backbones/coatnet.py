@@ -7,42 +7,20 @@ import torch
 import torch.nn as nn
 
 sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
-# from models.backbones.yolo5 import Focus
-# from models.common import Conv
-
+from models.common import Conv
 
 PARAMS = {
     ##       L                              D 
-    '0':{'num_blocks': [2, 2, 3, 5, 2],   'channels': [64, 96, 192, 384, 768],    'downsample':True},
-    '1':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [64, 96, 192, 384, 768],    'downsample':True},
-    '2':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [128, 128, 256, 512, 1024], 'downsample':True},
-    '3':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [192, 192, 384, 768, 1536], 'downsample':True},
-    '4':{'num_blocks': [2, 2, 12, 28, 2], 'channels': [192, 192, 384, 768, 1536], 'downsample':True},
-    'x':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [96, 192, 192, 384, 768],   'downsample':False},
+    'p':{'num_blocks': [2, 2, 3, 5, 2],   'channels': [32,  32,  64,  128, 256],  'downsample':True},   ## pico
+    'n':{'num_blocks': [2, 2, 3, 5, 2],   'channels': [32,  48,  96,  192, 384],  'downsample':True},   ## nano
+    'm':{'num_blocks': [2, 2, 3, 5, 2],   'channels': [32,  64,  128, 256, 512],  'downsample':True},   ## micro
+    't':{'num_blocks': [2, 2, 3, 5, 2],   'channels': [64,  96,  192, 384, 768],  'downsample':True},   ## tiny
+    's':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [64,  96,  192, 384, 768],  'downsample':True},   ## small
+    'l':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [128, 128, 256, 512, 1024], 'downsample':True},   ## large
+    'h':{'num_blocks': [2, 2, 6, 14, 2],  'channels': [192, 192, 384, 768, 1536], 'downsample':True},   ## huge
+    'g':{'num_blocks': [2, 2, 12, 28, 2], 'channels': [192, 192, 384, 768, 1536], 'downsample':True},   ## giant
 }
 
-
-def autopad(k, p=None):  # kernel, padding
-    # Pad to 'same'
-    if p is None:
-        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
-    return p
-
-
-class Conv(nn.Module):
-    # Standard convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super().__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
-
-    def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
-
-    def forward_fuse(self, x):
-        return self.act(self.conv(x))
-    
 
 def conv_3x3_bn(inp, oup, image_size, downsample=False):
     stride = 1 if downsample == False else 2
@@ -237,9 +215,6 @@ class CoAtNetBackbone(nn.Module):
         
         num_blocks = PARAMS[variant]['num_blocks']
         channels   = PARAMS[variant]['channels']
-        # downsample = PARAMS[variant]['downsample']
-        # if not downsample:
-        #     assert channels[1] == channels[2], "While set downsample to False, channels should be updated synchronously！"
         
         ih, iw = image_size
         block = {'C': MBConv, 'T': Transformer}
@@ -260,11 +235,7 @@ class CoAtNetBackbone(nn.Module):
         fpn_feats = []
         for idx, m in enumerate(self.layers):
             x = m(x)
-            if idx == 3:
-                fpn_feats.append(x)
-            elif idx == 4:
-                fpn_feats.append(x)
-            elif idx == 5:
+            if idx in [2, 3, 4]:            ## 取80、40、20特征图，for_yolox
                 fpn_feats.append(x)
         return fpn_feats
     
@@ -279,7 +250,10 @@ class CoAtNetBackbone(nn.Module):
 
 
 if __name__ == '__main__':
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
     img = torch.randn(1, 3, 640, 640)
-    model = CoAtNetBackbone(variant='1', image_size=(640, 640))
+    model = CoAtNetBackbone(variant='p', image_size=(640, 640))
     fpn_feats = model(img)
     print(*[v.shape for v in fpn_feats], sep='\n')
+    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

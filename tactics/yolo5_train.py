@@ -9,9 +9,11 @@ import torch.nn as nn
 from torch.cuda import amp
 from torch.optim import SGD, Adam, AdamW, lr_scheduler
 
-from utils.loss import ComputeLoss
-from utils.torch_utils import EarlyStopping, de_parallel
-from utils.general import colorstr, labels_to_class_weights, labels_to_image_weights, one_cycle, LOGGER
+import val  # for end-of-epoch mAP
+from tactics.metrics import fitness
+from tactics.loss import ComputeLoss
+from tactics.torch_utils import EarlyStopping, de_parallel
+from tactics.general import colorstr, labels_to_class_weights, labels_to_image_weights, one_cycle, LOGGER
 
 
 def yolo5_train_setup(args, model, optimizer, dataset, device):
@@ -31,7 +33,7 @@ def yolo5_train_setup(args, model, optimizer, dataset, device):
     args.last_opt_step = -1
     args.maps = np.zeros(args.nc)  # mAP per class
     
-    stopper = EarlyStopping(patience=args.patience)
+    # stopper = EarlyStopping(patience=args.patience)
     compute_loss = ComputeLoss(de_parallel(model), original_model_benchmark_test=args.original_model_benchmark_test)  # init loss class
     
     ##! Scheduler
@@ -41,11 +43,63 @@ def yolo5_train_setup(args, model, optimizer, dataset, device):
         lf = one_cycle(1, args.hyp['lrf'], args.epochs)  # cosine 1->hyp['lrf']
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)  # plot_lr_scheduler(optimizer, scheduler, epochs)
     scheduler.last_epoch = args.start_epoch - 1  # do not move
-    return model, stopper, compute_loss, scheduler, lf
+    return model, compute_loss, scheduler, lf
 
 
-def train_one_epoch_with_yolo5_head(args, ema, model, epoch, dataset, optimizer, scaler, device, compute_loss, callbacks,
-                                    train_loader, lf, scheduler, rank, world_size):
+def get_yolo5_optimizer(args, model):
+    # Optimizer
+    args.accumulate = max(round(args.nbs / args.batch_size), 1)  # accumulate loss before optimizing
+    args.hyp['weight_decay'] *= args.batch_size * args.accumulate / args.nbs  # scale weight_decay
+    logger.info(f"Scaled weight_decay = {args.hyp['weight_decay']}")
+
+    g0, g1, g2 = [], [], []  # optimizer parameter groups
+    for v in model.modules():
+        if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):  # bias
+            g2.append(v.bias)
+        if isinstance(v, nn.BatchNorm2d):  # weight (no decay)
+            g0.append(v.weight)
+        elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):  # weight (with decay)
+            g1.append(v.weight)
+
+    if args.optimizer == 'Adam':
+        optimizer = Adam(g0, lr=args.hyp['lr0'], betas=(args.hyp['yolo5_momentum'], 0.999))  # adjust beta1 to momentum
+    elif args.optimizer == 'AdamW':
+        optimizer = AdamW(g0, lr=args.hyp['lr0'], betas=(args.hyp['yolo5_momentum'], 0.999))  # adjust beta1 to momentum
+    else:
+        optimizer = SGD(g0, lr=args.hyp['lr0'], momentum=args.hyp['yolo5_momentum'], nesterov=True)
+
+    optimizer.add_param_group({'params': g1, 'weight_decay': args.hyp['weight_decay']})  # add g1 with weight_decay
+    optimizer.add_param_group({'params': g2})  # add g2 (biases)
+    logger.info(f"{colorstr('optimizer:')} {type(optimizer).__name__} with parameter groups "
+                f"{len(g0)} weight (no decay), {len(g1)} weight, {len(g2)} bias")
+    del g0, g1, g2
+    return optimizer
+
+
+def epoch_eval_yolo5(args, epoch, evalmodel, val_loader, callbacks=None):
+    results = (0, 0, 0, 0, 0, 0, 0)
+    # Calculate mAP
+    results, args.maps, _ = val.run(args.data_dict,
+                                    batch_size=args.batch_size * 2,
+                                    imgsz=args.imgsz,
+                                    model=evalmodel,
+                                    single_cls=args.single_cls,
+                                    dataloader=val_loader,
+                                    save_dir=args.save_dir,
+                                    plots=False,
+                                    save_json=False,
+                                    callbacks=callbacks,
+                                    compute_loss=False)
+    # Update best mAP
+    fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+    if fi > args.best_fitness:
+        args.best_fitness = fi
+    val_info = f'【epoch-val】:{epoch+1:3d}\tP: {results[0]:.5f}\tR: {results[1]:.5f}\tmAP@.5: {results[2]:.5f}\tmAP@.5:.95: {results[3]:.5f}'
+    logger.info(val_info)
+    return args.best_fitness == fi, results
+
+
+def train_one_epoch_with_yolo5_head(args, epoch, model, ema_model, dataset, train_loader, val_loader, optimizer, scaler, scheduler, lf, compute_loss, callbacks, device, rank, world_size):
     nb = len(train_loader)
     gs = args.grid_size
     # Update image weights (optional, single-GPU only)
@@ -79,7 +133,7 @@ def train_one_epoch_with_yolo5_head(args, ema, model, epoch, dataset, optimizer,
                 # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
                 x['lr'] = np.interp(ni, xi, [args.hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
                 if 'momentum' in x:
-                    x['momentum'] = np.interp(ni, xi, [args.hyp['warmup_momentum'], args.hyp['momentum']])
+                    x['momentum'] = np.interp(ni, xi, [args.hyp['warmup_momentum'], args.hyp['yolo5_momentum']])
 
         # Multi-scale
         if args.multi_scale:
@@ -106,8 +160,8 @@ def train_one_epoch_with_yolo5_head(args, ema, model, epoch, dataset, optimizer,
             scaler.step(optimizer)  # optimizer.step
             scaler.update()
             optimizer.zero_grad()
-            if ema:
-                ema.update(model)
+            if ema_model:
+                ema_model.update(model)
             args.last_opt_step = ni
 
         # Log
@@ -119,42 +173,24 @@ def train_one_epoch_with_yolo5_head(args, ema, model, epoch, dataset, optimizer,
             pbar.set_description(iter_info)
             callbacks.run('on_train_batch_end', ni, model, imgs, targets, paths, args.plots, args.sync_bn)
         # end batch ------------------------------------------------------------------------------------------------
+        
     # Scheduler
-    lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
     scheduler.step()
+    
+    is_best, results = False, None
     if rank in [-1, 0]:
         epoch_info = f'【epoch-train】:{epoch+1:3d}\tgpu_mem: {mem}\ttotal: {mloss[0]:.5f}\tbox: {mloss[1]:.5f}\tobj: {mloss[2]:.5f}\tcls: {mloss[3]:.5f}\timgsz: {imgs.shape[-1]}'
         logger.info(epoch_info)
         callbacks.run('on_train_epoch_end', epoch=epoch)
-        ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
+        ema_model.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
         
-    return mloss, lr
-
-def get_yolo5_optimizer(args, model):
-    # Optimizer
-    args.accumulate = max(round(args.nbs / args.batch_size), 1)  # accumulate loss before optimizing
-    args.hyp['weight_decay'] *= args.batch_size * args.accumulate / args.nbs  # scale weight_decay
-    logger.info(f"Scaled weight_decay = {args.hyp['weight_decay']}")
-
-    g0, g1, g2 = [], [], []  # optimizer parameter groups
-    for v in model.modules():
-        if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):  # bias
-            g2.append(v.bias)
-        if isinstance(v, nn.BatchNorm2d):  # weight (no decay)
-            g0.append(v.weight)
-        elif hasattr(v, 'weight') and isinstance(v.weight, nn.Parameter):  # weight (with decay)
-            g1.append(v.weight)
-
-    if args.optimizer == 'Adam':
-        optimizer = Adam(g0, lr=args.hyp['lr0'], betas=(args.hyp['momentum'], 0.999))  # adjust beta1 to momentum
-    elif args.optimizer == 'AdamW':
-        optimizer = AdamW(g0, lr=args.hyp['lr0'], betas=(args.hyp['momentum'], 0.999))  # adjust beta1 to momentum
-    else:
-        optimizer = SGD(g0, lr=args.hyp['lr0'], momentum=args.hyp['momentum'], nesterov=True)
-
-    optimizer.add_param_group({'params': g1, 'weight_decay': args.hyp['weight_decay']})  # add g1 with weight_decay
-    optimizer.add_param_group({'params': g2})  # add g2 (biases)
-    logger.info(f"{colorstr('optimizer:')} {type(optimizer).__name__} with parameter groups "
-                f"{len(g0)} weight (no decay), {len(g1)} weight, {len(g2)} bias")
-    del g0, g1, g2
-    return optimizer
+        ## epoch eval
+        if val_loader:
+            if ema_model:
+                evalmodel = ema_model.ema
+            else:
+                evalmodel = de_parallel(model)
+            final_epoch = epoch + 1 == args.epochs
+            if not args.noval or final_epoch:
+                is_best, results = epoch_eval_yolo5(args, epoch, evalmodel, val_loader, callbacks=None)
+    return is_best, results

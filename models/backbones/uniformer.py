@@ -1,49 +1,27 @@
 # Copyright (c) 2015-present, Facebook, Inc.
 # All rights reserved.
+import os, sys
+from functools import partial
 from collections import OrderedDict
+
 import torch
 import torch.nn as nn
-from functools import partial
-import torch.nn.functional as F
-import math
-from timm.models.vision_transformer import _cfg
 from timm.models.layers import trunc_normal_, DropPath, to_2tuple
-import os, sys
-# sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
-# from models.common import Conv
 
-
-layer_scale = False
+sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
+from models.common import Conv
 init_value = 1e-6
 
 PARAMS = {
-    's':{'depth':[3, 4, 8, 3],   'conv_stem':False, 'layer_scale':False},
-    'p':{'depth':[3, 5, 9, 3],   'conv_stem':True,  'layer_scale':False},
-    'b':{'depth':[5, 8, 20, 7],  'conv_stem':False, 'layer_scale':False},
-    'ls':{'depth':[5, 8, 20, 7], 'conv_stem':False, 'layer_scale':True},
+    'p': {'depth':[1, 2, 3,  2], 'embed_dim': [32, 64,  128, 256], 'head_dim': 32, 'conv_stem':False, 'layer_scale':False},    ## pico
+    'n': {'depth':[2, 2, 6,  2], 'embed_dim': [32, 64,  128, 256], 'head_dim': 32, 'conv_stem':True,  'layer_scale':False},    ## nano
+    'm': {'depth':[3, 4, 8,  3], 'embed_dim': [48, 96,  192, 384], 'head_dim': 48, 'conv_stem':False, 'layer_scale':False},    ## micro
+    't': {'depth':[3, 4, 8,  3], 'embed_dim': [64, 128, 256, 512], 'head_dim': 64, 'conv_stem':False, 'layer_scale':True},     ## tiny
+    's': {'depth':[3, 4, 8,  3], 'embed_dim': [64, 128, 256, 512], 'head_dim': 64, 'conv_stem':False, 'layer_scale':False},    ## small
+    'l': {'depth':[3, 5, 9,  3], 'embed_dim': [64, 128, 256, 512], 'head_dim': 64, 'conv_stem':True,  'layer_scale':False},    ## large
+    'h': {'depth':[5, 8, 20, 7], 'embed_dim': [64, 128, 256, 512], 'head_dim': 64, 'conv_stem':False, 'layer_scale':False},    ## huge
+    'g': {'depth':[5, 8, 20, 7], 'embed_dim': [64, 128, 256, 512], 'head_dim': 64, 'conv_stem':False, 'layer_scale':True},     ## giant
 }
-
-
-def autopad(k, p=None):  # kernel, padding
-    # Pad to 'same'
-    if p is None:
-        p = k // 2 if isinstance(k, int) else [x // 2 for x in k]  # auto-pad
-    return p
-
-
-class Conv(nn.Module):
-    # Standard convolution
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):  # ch_in, ch_out, kernel, stride, padding, groups
-        super().__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, autopad(k, p), groups=g, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Module) else nn.Identity())
-
-    def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
-
-    def forward_fuse(self, x):
-        return self.act(self.conv(x))
 
 
 class Mlp(nn.Module):
@@ -256,6 +234,7 @@ class UniFormerBackbone(nn.Module):
         """
         super().__init__()
         depth       = PARAMS[variant]['depth']
+        embed_dim   = PARAMS[variant]['embed_dim']
         conv_stem   = PARAMS[variant]['conv_stem']
         layer_scale = PARAMS[variant]['layer_scale']
         
@@ -336,6 +315,7 @@ class UniFormerBackbone(nn.Module):
         x = self.focus(x)
         x = self.patch_embed1(x)
         x = self.pos_drop(x)
+        fpn_feats.append(x)
         for blk in self.blocks1:
             x = blk(x)
         x = self.patch_embed2(x)
@@ -347,7 +327,6 @@ class UniFormerBackbone(nn.Module):
         for blk in self.blocks3:
             x = blk(x)
         x = self.patch_embed4(x)
-        fpn_feats.append(x)
         for blk in self.blocks4:
             x = blk(x)
         x = self.norm(x)
@@ -367,8 +346,12 @@ def build_UniFormer(variant='b', input_size=640, pretrained=True, **kwargs):
     # model.default_cfg = _cfg()
     return model
 
+
 if __name__ == '__main__':
-    uniformerBackbone = UniFormerBackbone(variant='s', img_size=640)
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model = UniFormerBackbone(variant='p', img_size=640)
     x = torch.rand(8, 3, 640, 640)
-    fpn_feats = uniformerBackbone(x)
+    fpn_feats = model(x)
     print(*[v.shape for v in fpn_feats], sep='\n')
+    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

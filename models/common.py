@@ -2,30 +2,29 @@
 """
 Common modules
 """
-
+import cv2
 import json
 import math
+import yaml
 import platform
+import requests
 import warnings
-from collections import OrderedDict, namedtuple
-from copy import copy
-from pathlib import Path
-
-import cv2
 import numpy as np
 import pandas as pd
-import requests
+from PIL import Image
+from copy import copy
+from pathlib import Path
+from collections import OrderedDict, namedtuple
+
 import torch
 import torch.nn as nn
-import yaml
-from PIL import Image
 from torch.cuda import amp
 
-from utils.datasets import exif_transpose, letterbox
-from utils.general import (LOGGER, check_requirements, check_suffix, check_version, colorstr, increment_path,
+from tactics.datasets import exif_transpose, letterbox
+from tactics.general import (LOGGER, check_requirements, check_suffix, check_version, colorstr, increment_path,
                            make_divisible, non_max_suppression, scale_coords, xywh2xyxy, xyxy2xywh)
-from utils.plots import Annotator, colors, save_one_box
-from utils.torch_utils import copy_attr, time_sync
+from tactics.plots import Annotator, colors, save_one_box
+from tactics.torch_utils import copy_attr, time_sync
 
 
 def autopad(k, p=None):  # kernel, padding

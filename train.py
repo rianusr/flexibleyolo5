@@ -6,10 +6,11 @@ import numpy as np
 from pathlib import Path
 from loguru import logger
 from copy import deepcopy
-import torch
-import torch.distributed as dist
 from datetime import datetime
+
+import torch
 from torch.cuda import amp
+import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 FILE = Path(__file__).resolve()
@@ -18,19 +19,19 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-import val  # for end-of-epoch mAP
-from utils.callbacks import Callbacks
-from utils.general import check_img_size, increment_path, colorstr, strip_optimizer, intersect_dicts, check_dataset
-from utils.torch_utils import ModelEMA, select_device, de_parallel
-from utils.bdp import BalancedDataParallel
-from models.flexibleYolo5 import build_model
+from tactics.plots import plot_labels
+from tactics.callbacks import Callbacks
+from tactics.bdp import BalancedDataParallel
+from tactics.datasetsX import DataPrefetcher
+from tactics.autoanchor import check_anchors
+from tactics.datasets import create_dataloader
+from tactics.dataloaderX import create_yolox_dataloader
+from tactics.torch_utils import ModelEMA, select_device, de_parallel
+from tactics.yolo5_train import yolo5_train_setup, get_yolo5_optimizer, train_one_epoch_with_yolo5_head
+from tactics.yolox_train import yolox_train_setup, get_yolox_optimizer, train_one_epoch_with_yolox_head
+from tactics.general import check_img_size, increment_path, colorstr, strip_optimizer, intersect_dicts, check_dataset, LOGGER
 from models.yolo import Model
-from tactics.yolo5_train import get_yolo5_optimizer, yolo5_train_setup, train_one_epoch_with_yolo5_head
-from utils.datasets import create_dataloader
-from utils.plots import plot_labels
-from utils.autoanchor import check_anchors
-from utils.metrics import fitness
-
+from models.flexibleYolo5 import build_model
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))  # https://pytorch.org/docs/stable/elastic/run.html
 RANK = int(os.getenv('RANK', -1))
@@ -44,8 +45,6 @@ def parse_args(known=False):
     parser.add_argument('--pretrained', type=str, default=ROOT / 'yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default=ROOT / 'models/yamls/yolov5s.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default=ROOT / 'data/coco128.yaml', help='dataset.yaml path')
-    parser.add_argument('--train_path', type=str, default='/data/datasets/detData/expData/trainData', help='train_path')
-    parser.add_argument('--val_path', type=str, default='/data/datasets/detData/expData/valData', help='val_path')
     parser.add_argument('--hyp', type=str, default=ROOT / 'data/hyps/hyp.scratch.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs, -1 for autobatch')
@@ -87,8 +86,15 @@ def parse_args(known=False):
     parser.add_argument('--head_variant', type=str, default='yolo5-s', help='det_head variant')
     parser.add_argument('--im_name', type=str, default='images', help='JPEGImages | images')
     parser.add_argument('--gpu0_bs', type=int, default=0, help='bs of gpu0')
-    parser.add_argument('--plots', action='store_true', help='bs of gpu0')
+    parser.add_argument('--no_aug', action='store_true', help='no_aug')
+    parser.add_argument('--plots', action='store_true', help='plots')
     parser.set_defaults(plots=True)
+    
+    parser.add_argument('--fp16', action='store_true', help='fp16')
+    parser.add_argument('--pin_memory', action='store_true', default=True, help='pin_memory')
+    parser.add_argument('--no_aug_epochs', type=int, default=15, help='bs of gpu0')
+    
+    parser.add_argument('--stages_save', type=int, default=50, help='save best model every stage')
     
     parser.add_argument('--original_model_benchmark_test', action='store_true', help='using origin yolo5 model for benchmark test')
     args = parser.parse_known_args()[0] if known else parser.parse_args()
@@ -118,6 +124,9 @@ def set_resume(args, ckpt, ema, optimizer):
 
 
 def build_dataloader(args):
+    if args.yolox_H:
+        train_loader, dataset, val_loader = create_yolox_dataloader(args, args.batch_size, WORLD_SIZE > 1)
+        return train_loader, dataset, val_loader
     # Trainloader
     train_loader, dataset = create_dataloader(
         args.train_path, args.imgsz, args.batch_size // WORLD_SIZE, args.grid_size, args.single_cls,
@@ -135,34 +144,9 @@ def build_dataloader(args):
     return train_loader, dataset, val_loader
 
 
-def epoch_eval_and_save(epoch, ema_model, model, stopper, optimizer, compute_loss, val_loader, mloss, lr, callbacks=None):
-    final_epoch = (epoch + 1 == args.epochs) or (stopper and stopper.possible_stop)
-    results = (0, 0, 0, 0, 0, 0, 0)
-    if not args.noval or final_epoch:  # Calculate mAP
-        results, args.maps, _ = val.run(args.data_dict,
-                                        batch_size=args.batch_size // WORLD_SIZE * 2,
-                                        imgsz=args.imgsz,
-                                        model=ema_model.ema,
-                                        single_cls=args.single_cls,
-                                        dataloader=val_loader,
-                                        save_dir=args.save_dir,
-                                        plots=False,
-                                        callbacks=callbacks,
-                                        compute_loss=compute_loss)
-        val_info = f'【epoch-val】:{epoch+1:3d}\tP: {results[0]:.5f}\tR: {results[1]:.5f}\tmAP@.5: {results[2]:.5f}\tmAP@.5:.95: {results[3]:.5f}'
-        logger.info(val_info)
-    # Update best mAP
-    fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-    if fi > args.best_fitness:
-        args.best_fitness = fi
-        
-    if callbacks:
-        if not isinstance(lr, list):
-            lr = [lr]
-        log_vals = list(mloss) + list(results) + lr
-        callbacks.run('on_fit_epoch_end', log_vals, epoch, args.best_fitness, fi)
-
-    # Save model
+def model_save(args, epoch, ema_model, model, optimizer, is_best, results):
+    #! model save
+    final_epoch = epoch + 1 == args.epochs
     if (not args.nosave) or (final_epoch and not args.evolve):  # if save
         ckpt = {'epoch': epoch,
                 'best_fitness': args.best_fitness,
@@ -172,16 +156,18 @@ def epoch_eval_and_save(epoch, ema_model, model, stopper, optimizer, compute_los
                 'optimizer': optimizer.state_dict(),
                 'date': datetime.now().isoformat()}
 
-        # Save last, best and delete
+        #! Save last
         torch.save(ckpt, args.last)
-        if args.best_fitness == fi:
+        #! Save best
+        if is_best:
             torch.save(ckpt, args.best)
-        if (epoch > 0) and (args.save_period > 0) and (epoch % args.save_period == 0):
-            torch.save(ckpt, args.w_dir / f'epoch{epoch}.pt')
+        #! Save stage best
+        if (epoch + 1) % args.stages_save == 0:
+            stage_best = args.w_dir / f'best_stage{epoch+1}.pt'
+            os.system(f"cp {args.best} {stage_best}")
+            strip_optimizer(stage_best)
         del ckpt
-        if callbacks is not None:
-            callbacks.run('on_model_save', args.last, epoch, final_epoch, args.best_fitness, fi)
-    # end epoch ----------------------------------------------------------------------------------------------------
+    return results
 
 
 def save_run_settings(args):
@@ -210,13 +196,19 @@ def build_original_yolo5_model(args, device):
 
 
 def main(args, callbacks=Callbacks()):
+    args.yolox_H = 'yolox' in args.head_variant.lower()
     if not os.path.exists(args.pretrained):
         logger.warning(f'{args.pretrained} not Exists! Training from scratch!')
         args.pretrained = ''
     args.is_distributed = WORLD_SIZE > 1
 
     #! saving dir
+    if args.yolox_H:
+        args.project = os.path.abspath(args.project) + f'_yoloxH/{args.bkbo_variant.lower()}__{args.head_variant.lower()}'
+    else:
+        args.project = os.path.abspath(args.project) + f'_yolo5H/{args.bkbo_variant.lower()}__{args.head_variant.lower()}'
     args.save_dir = increment_path(Path(args.project) / args.name, exist_ok=args.exist_ok, mkdir=True)
+    
     if RANK in [-1, 0]:
         logger.remove(handler_id=None)              ## 关闭logger的sys.stderr，可以输出到文件，但不会在终端显示 
         logger.add(args.save_dir / 'runtime.log')
@@ -242,9 +234,9 @@ def main(args, callbacks=Callbacks()):
     with open(args.hyp, errors='ignore') as f:
         args.hyp = yaml.safe_load(f)  # load hyps dict
     
-    if args.lr_scaler:
-        args.hyp['lr0'] = args.hyp['lr0'] * args.batch_size / 64
-    logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in args.hyp.items()))
+    if args.yolox_H:
+        args.hyp['lr0'] = args.hyp['basic_lr_per_img'] * args.batch_size
+    LOGGER.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in args.hyp.items()))
     
     if RANK in [-1, 0]: ## print info
         print(args)
@@ -261,7 +253,11 @@ def main(args, callbacks=Callbacks()):
     if args.single_cls:
         args.names = data_dict['names'] = ['item']
         args.nc    = data_dict['nc'] = 1
-
+    if args.yolox_H:
+        # assert 'background' in args_dict['classes'], '"background" must provided and must put it into index 0'
+        args.names.insert(0, 'background')
+        args.nc += 1
+        
     args.data_dict = data_dict
     assert len(args.names) == args.nc, f'{len(args.names)} names found for nc={args.nc} dataset!'  # check
     
@@ -270,7 +266,8 @@ def main(args, callbacks=Callbacks()):
         model, ckpt = build_original_yolo5_model(args, device)
     else:
         freeze=[]
-        model, ckpt = build_model(args.nc, args.imgsz, args.bkbo_variant, args.head_variant, args.hyp, device, pretrained=args.pretrained, freeze=freeze)
+        model, ckpt = build_model(args.nc, args.imgsz, args.bkbo_variant, args.head_variant, args.hyp, device, 
+                                  pretrained=args.pretrained, freeze=freeze, anchors=args.hyp['anchors_fpn'])
     model.nc    = args.nc      # attach number of classes to model
     model.hyp   = args.hyp     # attach hyperparameters to model
     model.names = args.names
@@ -280,10 +277,14 @@ def main(args, callbacks=Callbacks()):
     args.imgsz = check_img_size(args.imgsz, args.grid_size, floor=args.grid_size * 2)  # verify imgsz is gs-multiple
     
     ##! optimizer
-    optimizer = get_yolo5_optimizer(args, model) 
+    if args.yolox_H:
+        optimizer = get_yolox_optimizer(args, model) 
+    else:
+        optimizer = get_yolo5_optimizer(args, model) 
         
-    # EMA
-    ema_model = ModelEMA(model) if RANK in [-1, 0] else None
+    # yolo5 EMA
+    if not args.yolox_H:
+        ema_model = ModelEMA(model) if RANK in [-1, 0] else None
     
     args.start_epoch, args.best_fitness = 0, 0.0
     if args.resume and ckpt:
@@ -306,8 +307,9 @@ def main(args, callbacks=Callbacks()):
     
     ##! build dataloder
     train_loader, dataset, val_loader = build_dataloader(args)
-
-    if not args.resume:
+    prefetcher = DataPrefetcher(train_loader)
+    
+    if not args.resume and not args.yolox_H:
         labels = np.concatenate(dataset.labels, 0)
         if args.plots:
             plot_labels(labels, args.names, args.save_dir)
@@ -315,12 +317,15 @@ def main(args, callbacks=Callbacks()):
         # Anchors
         if not args.noautoanchor:
             check_anchors(args, dataset, model=model, thr=args.hyp['anchor_t'], imgsz=args.imgsz)
-        model.half().float()  # pre-reduce anchor precision
+    model.half().float()  # pre-reduce anchor precision
         
     # DDP mode
     if args.use_cuda and RANK != -1:
         model = DDP(model, device_ids=[LOCAL_RANK], output_device=LOCAL_RANK)
     
+    # yolox EMA
+    if args.yolox_H:
+        ema_model = ModelEMA(model, args.hyp['yolox_ema_decay']) if RANK in [-1, 0] else None
     # Start training
     # number of warmup iterations, max(3 epochs, 1k iterations)
     args.warmup_num = max(round(args.hyp['warmup_epochs'] * len(train_loader)), 1000)  
@@ -332,19 +337,31 @@ def main(args, callbacks=Callbacks()):
                 f'Starting training for {args.epochs} epochs...')
 
     ## before train setup
-    stopper = None
-    compute_loss = None    
-    model, stopper, compute_loss, lr_scheduler, lf = yolo5_train_setup(args, model, optimizer, dataset, device)
+    if args.yolox_H:
+        lr_scheduler, evaluator = yolox_train_setup(args, train_loader, val_loader, RANK)
+    else:
+        model, compute_loss, lr_scheduler, lf = yolo5_train_setup(args, model, optimizer, dataset, device)
     
     ##! start training
-    for epoch in range(args.start_epoch, args.epochs):  # epoch ------------------------------------------------------------------
+    for epoch in range(args.start_epoch, args.epochs):  
+        # epoch start ------------------------------------------------------------------
         model.train()
-        mloss, lr = train_one_epoch_with_yolo5_head(args, ema_model, model, epoch, dataset, optimizer, scaler, device, compute_loss, 
-                                                    callbacks, train_loader, lf, lr_scheduler, RANK, WORLD_SIZE)
+        if args.yolox_H:
+            is_best, results = train_one_epoch_with_yolox_head( args, epoch, 
+                                                                model, ema_model, 
+                                                                prefetcher, train_loader, val_loader, 
+                                                                optimizer, scaler, lr_scheduler, 
+                                                                evaluator, device, RANK)
+        else:
+            is_best, results = train_one_epoch_with_yolo5_head( args, epoch, 
+                                                                model, ema_model, 
+                                                                dataset, train_loader, val_loader,
+                                                                optimizer, scaler, lr_scheduler, lf, 
+                                                                compute_loss, callbacks, device, RANK, WORLD_SIZE)
+        if RANK in [-1, 0]:
+            model_save(args, epoch, ema_model, model, optimizer, is_best, results)
+        # epoch end ---------------------------------------------------------------------
         
-        if RANK in [-1, 0] and val_loader:
-            epoch_eval_and_save(epoch, ema_model, model, stopper, optimizer, compute_loss, val_loader, mloss, lr, callbacks=callbacks)
-
     ##! end training
     torch.cuda.empty_cache()
     if RANK in [-1, 0]:
@@ -352,7 +369,7 @@ def main(args, callbacks=Callbacks()):
         strip_optimizer(args.last)
     if WORLD_SIZE > 1 and RANK == 0:
         logger.info('Destroying process group... ')
-        dist.destroy_process_group()
+        dist.destroy_process_group() 
 
 
 if __name__ == '__main__':

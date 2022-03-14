@@ -37,14 +37,14 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
-from utils.callbacks import Callbacks
-from utils.datasets import create_dataloader
-from utils.general import (LOGGER, box_iou, check_dataset, check_img_size, check_requirements, check_yaml,
+from tactics.callbacks import Callbacks
+from tactics.datasets import create_dataloader
+from tactics.general import (LOGGER, box_iou, check_dataset, check_img_size, check_requirements, check_yaml,
                            coco80_to_coco91_class, colorstr, increment_path, non_max_suppression, print_args,
                            scale_coords, xywh2xyxy, xyxy2xywh)
-from utils.metrics import ConfusionMatrix, ap_per_class
-from utils.plots import output_to_target, plot_images, plot_val_study
-from utils.torch_utils import select_device, time_sync
+from tactics.metrics import ConfusionMatrix, ap_per_class
+from tactics.plots import output_to_target, plot_images, plot_val_study
+from tactics.torch_utils import select_device, time_sync
 
 
 def save_one_txt(predn, save_conf, shape, file):
@@ -200,7 +200,10 @@ def run(data,
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t3 = time_sync()
+        # out.shape = torch.Size([110, 25200, 85])  out[0] --> [4.5, 4.35156, 9.80469, 13.3047, 0.00118351, 0.121033, 0.117798, 0.124084, 0.140625, 0.125244]
         out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
+        # out --> class <list> 
+        # out[0].shape --> torch.Size([300, 6]) out[0] --> [-83.125, -85.8125, 116.0, 116.812, 0.00225639, 4.0]
         dt[2] += time_sync() - t3
 
         # Metrics
@@ -220,13 +223,26 @@ def run(data,
             if single_cls:
                 pred[:, 5] = 0
             predn = pred.clone()
+            
+            if verbose:
+                LOGGER.info(f'predn.shape: {predn.shape}')
+                LOGGER.info(f'predn[0] <before scale>: {predn[0]}')
             scale_coords(im[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
-
+            if verbose:
+                LOGGER.info(f'predn[0] <after scale>: {predn[0]}')
             # Evaluate
             if nl:
                 tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
+                if verbose:
+                    LOGGER.info(f'tbox.shape : {tbox.shape}')
+                    LOGGER.info(f'tbox[0] <before scale>: {tbox[0]}')
                 scale_coords(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
                 labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
+                if verbose:
+                    LOGGER.info(f'tbox[0] <after scale>: {tbox[0]}')
+                    LOGGER.info(f'labelsn.shape : {labelsn.shape}')
+                    LOGGER.info(f'labelsn[0] : {labelsn[0]}')
+                    
                 correct = process_batch(predn, labelsn, iouv)
                 if plots:
                     confusion_matrix.process_batch(predn, labelsn)
@@ -282,7 +298,8 @@ def run(data,
     # Save JSON
     if save_json and len(jdict):
         w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
-        anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
+        # anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
+        anno_json = '/data/datasets/gesture/valData/instances_valData.json'  # annotations json
         pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
         LOGGER.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
         with open(pred_json, 'w') as f:
@@ -301,7 +318,7 @@ def run(data,
             eval.evaluate()
             eval.accumulate()
             eval.summarize()
-            map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+            map, map50, summary = eval.stats  # update results (mAP@0.5:0.95, mAP@0.5)
         except Exception as e:
             LOGGER.info(f'pycocotools unable to run: {e}')
 

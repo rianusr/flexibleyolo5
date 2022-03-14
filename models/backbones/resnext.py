@@ -7,18 +7,17 @@ from torch import nn
 sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
 from models.common import Conv
 
-
-"""
-    # in_channel:输入block之前的通道数
-    # channel:在block中间处理的时候的通道数（这个值是输出维度的1/4)
-    # channel * block.expansion:输出的维度
-"""
-
-LAYERS_BLOCK = {
-    '50':   [3, 4, 6, 3],
-    '101': [3, 4, 23, 3],
-    '152':  [3, 8, 36, 3],
+PARAMS = {
+    'p': {'num_blocks': [3, 4, 6,  3], 'channels': [32,  64,  128, 256]},  ## pico
+    'n': {'num_blocks': [3, 4, 6,  3], 'channels': [64,  128, 256, 512]},  ## nano
+    'm': {'num_blocks': [3, 4, 6,  3], 'channels': [96,  192, 384, 768]},  ## micro
+    't': {'num_blocks': [3, 4, 6,  3], 'channels': [128, 256, 512, 1024]}, ## tiny      ## equal to 50
+    's': {'num_blocks': [3, 4, 13, 3], 'channels': [128, 256, 512, 1024]}, ## small
+    'l': {'num_blocks': [3, 4, 23, 3], 'channels': [128, 256, 512, 1024]}, ## large     ## equal to 101
+    'h': {'num_blocks': [3, 8, 23, 3], 'channels': [128, 256, 512, 1024]}, ## huge
+    'g': {'num_blocks': [3, 8, 36, 3], 'channels': [128, 256, 512, 1024]}, ## giant     ## equal to 152
 }
+
 
 class BottleNeck(nn.Module):
     expansion = 1
@@ -55,17 +54,18 @@ class BottleNeck(nn.Module):
 
 
 class ResNeXtBackbone(nn.Module):
-    def __init__(self, variant='50', focus_ch=32):
+    def __init__(self, variant='s', focus_ch=32):
         super().__init__()
         
-        layers_block = LAYERS_BLOCK[variant]
+        layers_blocks = PARAMS[variant]['num_blocks']
+        layers_channs = PARAMS[variant]['channels']
         focus = Conv(3, focus_ch, 6, 2, 2) if focus_ch > 3 else nn.Identity()
         self.in_channel = 64                ## net input, channel of net after stem
         stem   = self._make_stem(focus_ch)
-        layer0 = self._make_layer(128,  layers_block[0], stride=1)
-        layer1 = self._make_layer(256,  layers_block[1], stride=2)
-        layer2 = self._make_layer(512,  layers_block[2], stride=2)
-        layer3 = self._make_layer(1024, layers_block[3], stride=2)
+        layer0 = self._make_layer(layers_channs[0], layers_blocks[0], stride=1)
+        layer1 = self._make_layer(layers_channs[1], layers_blocks[1], stride=2)
+        layer2 = self._make_layer(layers_channs[2], layers_blocks[2], stride=2)
+        layer3 = self._make_layer(layers_channs[3], layers_blocks[3], stride=2)
         
         bkbo_layers = [focus, stem, layer0, layer1, layer2, layer3]
         self.backbone = nn.Sequential(*bkbo_layers)
@@ -74,11 +74,7 @@ class ResNeXtBackbone(nn.Module):
         fpn_feats = []
         for idx, m in enumerate(self.backbone):
             x = m(x)
-            if idx == 3:
-                fpn_feats.append(x)
-            if idx == 4:
-                fpn_feats.append(x)
-            if idx == 5:
+            if idx in [2, 3, 4]:        ## 取80、40、20特征图，for_yolox
                 fpn_feats.append(x)
         return fpn_feats
 
@@ -102,7 +98,10 @@ class ResNeXtBackbone(nn.Module):
 
 
 if __name__ == '__main__':
-    img = torch.rand((8, 3, 224, 224)).cuda()
-    model = ResNeXtBackbone(variant='50').cuda()
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    img = torch.rand((8, 3, 640, 640)).cuda()
+    model = ResNeXtBackbone(variant='s').cuda()
     fpn_feats = model(img)
     print(*[v.shape for v in fpn_feats], sep='\n')
+    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

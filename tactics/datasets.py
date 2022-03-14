@@ -30,10 +30,10 @@ from tqdm import tqdm
 
 import sys
 sys.path.append(os.path.dirname(__file__).replace('dataset/yolo5_dataloader', ''))
-from utils.augmentations import Albumentations, augment_hsv, copy_paste, letterbox, mixup, random_perspective
-from utils.general import (LOGGER, NUM_THREADS, check_dataset, check_requirements, check_yaml, clean_str,
+from tactics.augmentations import Albumentations, augment_hsv, copy_paste, letterbox, mixup, random_perspective
+from tactics.general import (LOGGER, NUM_THREADS, check_dataset, check_requirements, check_yaml, clean_str,
                            segments2boxes, xyn2xy, xywh2xyxy, xywhn2xyxy, xyxy2xywhn, xywhn2xywh, colorstr)
-from utils.torch_utils import torch_distributed_zero_first
+from tactics.torch_utils import torch_distributed_zero_first
 
 # Parameters
 HELP_URL = 'https://github.com/ultralytics/yolov5/wiki/Train-Custom-Data'
@@ -94,52 +94,6 @@ def exif_transpose(image):
             del exif[0x0112]
             image.info["exif"] = exif.tobytes()
     return image
-
-
-class DataPrefetcher:
-    """
-    DataPrefetcher is inspired by code of following file:
-    https://github.com/NVIDIA/apex/blob/master/examples/imagenet/main_amp.py
-    It could speedup your pytorch dataloader. For more information, please check
-    https://github.com/NVIDIA/apex/issues/304#issuecomment-493562789.
-    """
-
-    def __init__(self, loader):
-        self.loader = iter(loader)
-        self.stream = torch.cuda.Stream()
-        self.input_cuda = self._input_cuda_for_image
-        self.record_stream = DataPrefetcher._record_stream_for_image
-        self.preload()
-
-    def preload(self):
-        try:
-            self.next_input, self.next_target, _, _ = next(self.loader)
-        except StopIteration:
-            self.next_input = None
-            self.next_target = None
-            return
-
-        with torch.cuda.stream(self.stream):
-            self.input_cuda()
-            self.next_target = self.next_target.cuda(non_blocking=True)
-
-    def next(self):
-        torch.cuda.current_stream().wait_stream(self.stream)
-        input = self.next_input
-        target = self.next_target
-        if input is not None:
-            self.record_stream(input)
-        if target is not None:
-            target.record_stream(torch.cuda.current_stream())
-        self.preload()
-        return input, target
-
-    def _input_cuda_for_image(self):
-        self.next_input = self.next_input.cuda(non_blocking=True)
-
-    @staticmethod
-    def _record_stream_for_image(input):
-        input.record_stream(torch.cuda.current_stream())
 
 
 def create_dataloader(path, imgsz, batch_size, stride, single_cls=False, hyp=None, augment=False, cache=False, pad=0.0,
@@ -948,7 +902,7 @@ def flatten_recursive(path='../datasets/coco128'):
         shutil.copyfile(file, new_path / Path(file).name)
 
 
-def extract_boxes(path='../datasets/coco128', im_name='images'):  # from utils.datasets import *; extract_boxes()
+def extract_boxes(path='../datasets/coco128', im_name='images'):  # from tactics.datasets import *; extract_boxes()
     # Convert detection dataset into classification dataset, with one directory per class
     path = Path(path)  # images dir
     shutil.rmtree(path / 'classifier') if (path / 'classifier').is_dir() else None  # remove existing
@@ -984,7 +938,7 @@ def extract_boxes(path='../datasets/coco128', im_name='images'):  # from utils.d
 
 def autosplit(path='../datasets/coco128/images', weights=(0.9, 0.1, 0.0), annotated_only=False, im_name='images'):
     """ Autosplit a dataset into train/val/test splits and save path/autosplit_*.txt files
-    Usage: from utils.datasets import *; autosplit()
+    Usage: from tactics.datasets import *; autosplit()
     Arguments
         path:            Path to images directory
         weights:         Train, val, test weights (list, tuple)
@@ -1061,7 +1015,7 @@ def verify_image_label(args):
 def dataset_stats(path='coco128.yaml', verbose=False, profile=False, hub=False):
     """ Return dataset statistics dictionary with images and instances counts per split per class
     To run in parent directory: export PYTHONPATH="$PWD/yolov5"
-    Usage: from utils.datasets import *; dataset_stats('../datasets/coco128_with_yaml.zip')
+    Usage: from tactics.datasets import *; dataset_stats('../datasets/coco128_with_yaml.zip')
     Arguments
         path:           Path to data.yaml or data.zip (with data.yaml inside data.zip)
         autodownload:   Attempt to download dataset if not found locally

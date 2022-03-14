@@ -4,6 +4,8 @@
 # Licensed under The MIT License [see LICENSE for details]
 # Written by Ze Liu
 # --------------------------------------------------------
+import os, sys
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -11,23 +13,21 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from einops.layers.torch import Rearrange
-import numpy as np
-import os, sys
+
 sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
 from models.common import Conv
 
-
 PARAMS = {
-    'tiny_c24p4w8':{'drop_path_rate':0.2, 'embed_dim':96,  'window_size':8,  'depths':[2, 2, 6, 2],  'input_size':256, 'num_heads':[4, 8, 16, 32]},
-    'tiny_c12p4w8':{'drop_path_rate':0.2, 'embed_dim':96,  'window_size':8,  'depths':[2, 2, 6, 2],  'input_size':256, 'num_heads':[8, 16, 32, 64]},
-    'tiny_c6p4w8' :{'drop_path_rate':0.2, 'embed_dim':96,  'window_size':8,  'depths':[2, 2, 6, 2],  'input_size':256, 'num_heads':[16, 32, 64, 128]},
-    'base_p4w7'   :{'drop_path_rate':0.5, 'embed_dim':128, 'window_size':7,  'depths':[2, 2, 18, 2], 'input_size':224, 'num_heads':[4, 8, 16, 32]},
-    
-    'tinyc24_det' :{'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[4, 8, 16, 32]},
-    'tinyc12_det' :{'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[8, 16, 32, 64]},
-    'tinyc6_det'  :{'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[16, 32, 64, 128]},
-    'base_det'    :{'drop_path_rate':0.5, 'embed_dim':128, 'window_size':10, 'depths':[2, 2, 18, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},
+    'p': {'drop_path_rate':0.2, 'embed_dim':32,  'window_size':10, 'depths':[2, 2, 8, 2],  'input_size':320, 'num_heads':[2, 4, 8, 16]},     ## pico
+    'n': {'drop_path_rate':0.2, 'embed_dim':48,  'window_size':10, 'depths':[2, 2, 8, 2],  'input_size':320, 'num_heads':[2, 4, 8, 16]},     ## nano
+    'm': {'drop_path_rate':0.2, 'embed_dim':48,  'window_size':10, 'depths':[2, 2, 12, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## micro
+    't': {'drop_path_rate':0.5, 'embed_dim':64,  'window_size':10, 'depths':[2, 2, 12, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## tiny
+    's': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## small
+    'l': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[8, 16, 32, 64]},   ## large
+    'h': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[16, 32, 64, 128]}, ## huge
+    'g': {'drop_path_rate':0.5, 'embed_dim':128, 'window_size':10, 'depths':[2, 2, 18, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## giant
     }
+
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -467,10 +467,11 @@ class SwinMLPBackbone(nn.Module):
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
-
+        ra = Rearrange('b (ih iw) c -> b c ih iw', ih=int(np.sqrt(x.shape[1])), iw=int(np.sqrt(x.shape[1])))
+        fpn_feats.append(ra(x))
         for i, layer in enumerate(self.layers):
             x = layer(x)
-            if i != 2:
+            if i in [0, 1]:
                 ra = Rearrange('b (ih iw) c -> b c ih iw', ih=int(np.sqrt(x.shape[1])), iw=int(np.sqrt(x.shape[1])))
                 fpn_feats.append(ra(x))
         return fpn_feats
@@ -484,11 +485,12 @@ class SwinMLPBackbone(nn.Module):
         flops += self.num_features * self.num_classes
         return flops
 
-__all__ = ['tiny_c24p4w8', 'tiny_c12p4w8', 'tiny_c6p4w8', 'base_p4w7', 'tinyc24_det', 'tinyc12_det', 'tinyc6_det', 'base_det']
-
 
 if __name__ == '__main__':
-    model = SwinMLPBackbone(variant='base-det')
-    x = torch.rand(8, 3, 320, 320)
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model = SwinMLPBackbone(variant='t')
+    x = torch.rand(8, 3, 640, 640)
     fpn_feats = model(x)
     print(*[v.shape for v in fpn_feats], sep='\n')
+    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

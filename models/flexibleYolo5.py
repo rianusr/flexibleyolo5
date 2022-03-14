@@ -2,35 +2,38 @@ import os
 import sys
 import math
 import json
+import numpy as np
 
 import torch
 import torch.nn as nn
 
-import sys
 sys.path.append(os.path.dirname(__file__).replace('models', ''))
-from utils.torch_utils import fuse_conv_and_bn, initialize_weights, model_info, copy_attr, save_load_state_dict
-from utils.autoanchor import check_anchor_order
-
-from models.common import Conv, AutoShape
 from models.backbones import *
-from models.heads import YoloV5Head, Detect
+from models.common import Conv, AutoShape
+from models.heads import YoloV5Head, Detect, YOLOXHead
+
+from tactics.autoanchor import check_anchor_order
+from tactics.torch_utils import fuse_conv_and_bn, initialize_weights, model_info, copy_attr, save_load_state_dict
 
 __all_backbones__ = ['yolo5', 'resnext', 'coatnet', 'convnext', 'uniformer', 'swin_transformer', 'swin_mlp']
-__all_heads__ = ['yolo5']
+__all_heads__ = ['yolo5', 'yolox']
 
 
-ANCHORS = [
-        [10, 13, 16, 30, 33, 23],
-        [30, 61, 62, 45, 59, 119],
-        [116, 90, 156, 198, 373, 326]
-    ]
+ANCHORS1_0   = [[10, 13, 16, 30], None, None]
+ANCHORS1_1   = [None, [30, 61, 62, 45], None]
+ANCHORS1_2   = [None, None, [116, 90, 156, 198]]
+ANCHORS2_0_1 = [[30, 61], [116, 90], None]
+ANCHORS2_0_2 = [[10, 13], None, [116, 90]]
+ANCHORS2_1_2 = [None, [30, 61], [116, 90]]
+ANCHORS3     = [[10, 13], [30,  61], [116, 90]]
+ANCHORS      = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
 
 
 class FlexibleYolo5(nn.Module):
-    def __init__(self, bkbo_variant='yolo5-x', head_variant='x', nc=80, input_size=640, inplace=True):  # model, input channels, number of classes
+    def __init__(self, bkbo_variant='yolo5-x', head_variant='x', nc=80, input_size=640, anchors=ANCHORS3, inplace=True):  # model, input channels, number of classes
         super(FlexibleYolo5, self).__init__()
         self.input_size = input_size
-        self.anchors = ANCHORS
+        self.anchors = anchors
         self.inplace = inplace
         
         #! build backbone
@@ -43,6 +46,10 @@ class FlexibleYolo5(nn.Module):
             #! set stride and anchors
             self._build_stride_and_anchors()
             self.stride = self.head.model[-1].stride
+        elif 'yolox' in head_variant.lower():
+            in_channels = [x.shape[1] for x in in_fpn_feats]
+            self.head = YOLOXHead(variant=head_variant.split('-')[-1], num_classes=nc, in_channels=in_channels)
+            self.stride = torch.from_numpy(np.array([8., 16., 32.]))
         else:
             raise ValueError(f'Only {__all_heads__} are accepted!')
 
@@ -142,30 +149,9 @@ class FlexibleYolo5(nn.Module):
     def _show_variant(self):
         print(json.dumps(self.variant_params, ensure_ascii=False, indent=4))
 
-def build_model_2(num_classes, input_size, bkbo_variant, head_variant, hyp, device, pretrained='', freeze=[]):
-    flexibleYolo = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=num_classes, input_size=input_size)
-    model = flexibleYolo.model.to(device)
-    
-    ckpt = None
-    if pretrained:
-        ckpt = torch.load(pretrained, map_location='cpu')  # load checkpoint
-        if hyp.get('anchors'):
-            ckpt['model'].yaml['anchors'] = round(hyp['anchors'])  # force autoanchor
-        exclude = ['anchor'] if hyp.get('anchors') else []  # exclude keys
-        ckpt_state_dict = ckpt['model'].float().state_dict()  # to FP32
-        model = save_load_state_dict(model, ckpt_state_dict)
-        
-    # Freeze
-    for k, v in model.named_parameters():
-        v.requires_grad = True  # train all layers
-        if any(x in k for x in freeze):
-            print('freezing %s' % k)
-            v.requires_grad = False
-    return model, ckpt
 
-
-def build_model(num_classes, input_size, bkbo_variant, head_variant, hyp, device, pretrained='', freeze=[]):
-    model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=num_classes, input_size=input_size)
+def build_model(num_classes, input_size, bkbo_variant, head_variant, hyp, device, pretrained='', freeze=[], anchors=ANCHORS):
+    model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=num_classes, input_size=input_size, anchors=anchors)
     model.backbone = model.backbone.to(device)
     model.head = model.head.to(device)
     
@@ -188,20 +174,23 @@ def build_model(num_classes, input_size, bkbo_variant, head_variant, hyp, device
 
 
 if __name__ == '__main__':
-    variant = 'yolo5-s'
+    bkbo_variant = 'yolo5-s'
+    head_variant = 'yolo5-s'
     # Create model
-    model = FlexibleYolo5(bkbo_variant=variant, head_variant=variant, nc=80, input_size=640)
+    model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=80, input_size=640, anchors=ANCHORS2_0_2)
     # print('\n==============================\n')
     # model_state_dict = model.state_dict()
     # for idx, key in enumerate(model_state_dict):
     #     print(f"{idx:3d}    {key}\t{model_state_dict[key].shape}".expandtabs(64))
     # exit()
-    # model.info(verbose=True)
-    # print(sum(p.numel() for p in model.parameters() if p.requires_grad))
-    # model = model.cuda()
-    # model.train()
-    # img = torch.rand(2 if torch.cuda.is_available() else 1, 3, 640, 640).cuda()
-    # y = model(img)
-    # for r in y:
-    #     print(type(r))
-    #     print(r.shape)
+    model.info(verbose=False)
+    print(sum(p.numel() for p in model.parameters() if p.requires_grad))
+    model = model.cuda()
+    img = torch.rand(2 if torch.cuda.is_available() else 1, 3, 640, 640).cuda()
+    model.train()
+    outputs = model(img)
+    for out in outputs:
+        if isinstance(out, list):
+            print(*[v.shape for v in out], sep='\n')
+        else:
+            print(out.shape)

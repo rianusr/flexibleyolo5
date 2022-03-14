@@ -1,21 +1,17 @@
+import os
+import sys
+import math
+
 import torch
 import torch.nn as nn
 
-import os, sys
-sys.path.append(os.path.dirname(__file__).replace('/models/heads', ''))
+sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
+from models.common import Conv, C3, SPPF, Concat
 from tactics.general import check_version
-from models.common import Conv, C3, Concat
+from tactics.torch_utils import model_info, cal_flops
 
-
+YOLO5_VARIANT = {'p': {'depth_multiple': 0.33, 'width_multiple': 0.125}}
 fpn_names = ['p1', 'p2', 'p3']
-YOLO5_VARIANT = {
-        'n': {'depth_multiple': 0.33, 'width_multiple': 0.25},
-        't': {'depth_multiple': 0.33, 'width_multiple': 0.375},
-        's': {'depth_multiple': 0.33, 'width_multiple': 0.50},
-        'm': {'depth_multiple': 0.67, 'width_multiple': 0.75},
-        'l': {'depth_multiple': 1.0,  'width_multiple': 1.0},
-        'x': {'depth_multiple': 1.33, 'width_multiple': 1.25}
-    }
 
 ANCHORS1_0   = [[10, 13, 16, 30], None, None]
 ANCHORS1_1   = [None, [30, 61, 62, 45], None]
@@ -27,27 +23,38 @@ ANCHORS3     = [[10, 13], [30,  61], [116, 90]]
 ANCHORS      = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
 
 HEAD_PARAMS = [
-                [-1,                 ],     #! layer-idx = 0
-                [-1,                 ],     #! layer-idx = 1
-                [[-1, 'p2'],         ],     #! layer-idx = 2
-                [-1,                 ],     #! layer-idx = 3
-                [-1,                 ],     #! layer-idx = 4
-                [-1,                 ],     #! layer-idx = 5
-                [[-1, 'p1'],         ],     #! layer-idx = 6
-                [-1,                 ],     #! layer-idx = 7
-                [-1,                 ],     #! layer-idx = 8
-                [[-1, 'h1'],         ],     #! layer-idx = 9
-                [-1,                 ],     #! layer-idx = 10
-                [-1,                 ],     #! layer-idx = 11
-                [[-1, 'h0'],         ],     #! layer-idx = 12
-                [-1,                 ],     #! layer-idx = 13
-                [['d1', 'd2', 'd3']] ]      #! layer-idx = 14
+                [-1,           ],      #! backbone-0  
+                [-1,           ],      #! backbone-1  
+                [-1,           ],      #! backbone-2  
+                [-1,           ],      #! backbone-3  
+                [-1,           ],      #! backbone-4  
+                [-1,           ],      #! backbone-5  
+                [-1,           ],      #! backbone-6  
+                [-1,           ],      #! backbone-7  
+                [-1,           ],      #! backbone-8  
+                [-1,           ],      #! backbone-9  
+                [-1,           ],      #! head-0
+                [-1,           ],      #! head-1
+                [[-1, 'p2'],   ],      #! head-2
+                [-1,           ],      #! head-3
+                [-1,           ],      #! head-4
+                [-1,           ],      #! head-5
+                [[-1, 'p1'],   ],      #! head-6
+                [-1,           ],      #! head-7
+                [-1,           ],      #! head-8
+                [[-1, 'h1'],   ],      #! head-9
+                [-1,           ],      #! head-10
+                [-1,           ],      #! head-11
+                [[-1, 'h0'],   ],      #! head-12
+                [-1,           ],      #! head-13
+                [['d2', 'd3']] ]       #! head-14
+
 
 class Detect(nn.Module):
     stride = None  # strides computed during build
     onnx_dynamic = False  # ONNX export parameter
 
-    def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
+    def __init__(self, nc=80, anchors=ANCHORS1_0, ch=(), inplace=True):  # detection layer
         super().__init__()
         self.nc = nc  # number of classes
         self.no = nc + 5  # number of outputs per anchor
@@ -93,64 +100,65 @@ class Detect(nn.Module):
         return grid, anchor_grid
 
 
-class YoloV5Head(nn.Module):
-    def __init__(self, variant='s', nc=80, in_fpn_feats={}, anchors=ANCHORS, head_params=HEAD_PARAMS):  # model, input channels, number of classes
-        super(YoloV5Head, self).__init__()
-        assert in_fpn_feats and len(in_fpn_feats) == 3, '''
-            fpn_shapes: feats for fpn layer, it contains 3 stages: p1, p2, p3, for example:
-            fpn_shapes = {
-                'p1':(b, 128, 80, 80),     # 'p1'  (batch_size, channel, width, height) <tensor>
-                'p2':(b, 256, 40, 40),     # 'p2'
-                'p3':(b, 512, 20, 20),     # 'p3'
-            }
-        '''
+class zolo(nn.Module):
+    def __init__(self, variant='p', nc=80, anchors=ANCHORS1_0, head_params=HEAD_PARAMS):  # model, input channels, number of classes
+        super(zolo, self).__init__()
         self.anchors, self.valid_anchors_idx, self.head_d_n = self.check_anchors(anchors) 
-        self.head_params = head_params
+        self.head_params    = head_params
         self.update_head_params()
         
-        gh = YOLO5_VARIANT[variant]['depth_multiple']
-        self.p1_ch, self.p2_ch, self.p3_ch = in_fpn_feats[0].shape[1], in_fpn_feats[1].shape[1], in_fpn_feats[2].shape[1]
+        self.variant_params = YOLO5_VARIANT[variant]
+        gh, gw = self.variant_params['depth_multiple'], self.variant_params['width_multiple']
+        # layers
+        base_channel = math.ceil(64 * gw / 8) * 8   # 32
+        
+        ##! backbone!
+        backbone_0 = Conv(3, base_channel, 6, 2, 2)                                     ## Focus
+        backbone_1 = Conv(base_channel, base_channel * 2, 3, 2)
+        backbone_2 = C3(base_channel * 2, base_channel * 2,   max(round(3 * gh), 1))
+        backbone_3 = Conv(base_channel * 2, base_channel * 4, 3, 2)
+        backbone_4 = C3(base_channel * 4, base_channel * 4,   max(round(3 * gh), 1))
+        backbone_5 = Conv(base_channel * 4, base_channel * 8, 3, 2)
+        backbone_6 = C3(base_channel * 8, base_channel * 8,   max(round(6 * gh), 1))
+        backbone_7 = Conv(base_channel * 8, base_channel * 16, 3, 2)
+        backbone_8 = C3(base_channel * 16, base_channel * 16, max(round(3 * gh), 1))
+        backbone_9 = SPPF(base_channel * 16, base_channel * 16)
+        ## build backbone
+        bkbo_layers = [backbone_0, backbone_1, backbone_2, backbone_3, backbone_4, backbone_5, backbone_6, backbone_7, backbone_8, backbone_9]
         
         ## 8 * 512 * 20 * 20
-        head_0 = Conv(self.p3_ch, self.p2_ch, 1, 1)
+        head_0 = Conv(base_channel * 16, base_channel * 8, 1, 1)
         head_1 = nn.Upsample(None, 2, 'nearest')
         head_2 = Concat(1)
-        head_3 = C3(self.p3_ch, self.p2_ch, max(round(3 * gh), 1), False)
-        head_4 = Conv(self.p2_ch, self.p1_ch, 1, 1)
+        head_3 = C3(base_channel * 16, base_channel * 8,   max(round(3 * gh), 1), False)
+        head_4 = Conv(base_channel * 8, base_channel * 4, 1, 1)
         head_5 = nn.Upsample(None, 2, 'nearest')
         head_6 = Concat(1)
-        head_7 = C3(self.p2_ch, self.p1_ch, max(round(3 * gh), 1), False)
-        fpn_p3_ch = self.p1_ch
-        head_8 = Conv(self.p1_ch, self.p1_ch, 3, 2)
+        head_7 = C3(base_channel * 8, base_channel * 4,    max(round(3 * gh), 1), False)
+        head_8 = Conv(base_channel * 4, base_channel * 4, 3, 2)
         head_9 = Concat(1)
-        head_10 = C3(self.p2_ch, self.p2_ch, max(round(3 * gh), 1), False)
-        fpn_p4_ch = self.p2_ch
-        head_11 = Conv(self.p2_ch, self.p2_ch, 3, 2)
+        head_10 = C3(base_channel * 8, base_channel * 8,   max(round(3 * gh), 1), False)
+        head_11 = Conv(base_channel * 8, base_channel * 8, 3, 2)
         head_12 = Concat(1)
-        head_13 = C3(self.p3_ch, self.p3_ch, max(round(3 * gh), 1), False)
-        fpn_p5_ch = self.p3_ch
-        fpn_chs = (fpn_p3_ch, fpn_p4_ch, fpn_p5_ch)
-        detect_layer = Detect(nc=nc, anchors=self.anchors, ch=[fpn_chs[ix] for ix in self.valid_anchors_idx])
-        head_layers = [head_0, head_1, head_2, head_3, head_4, head_5, head_6, head_7, head_8, head_9, head_10, head_11, head_12, head_13, detect_layer]
+        head_13 = C3(base_channel * 16, base_channel * 16, max(round(3 * gh), 1), False)
 
-        self.model = nn.Sequential(*head_layers)
+        fpn_p3_ch = base_channel * 4
+        fpn_p4_ch = base_channel * 8
+        fpn_p5_ch = base_channel * 16
+        fpn_chs = (fpn_p3_ch, fpn_p4_ch, fpn_p5_ch)
+        
+        detect_layer = Detect(nc=nc, anchors=self.anchors, ch=[fpn_chs[ix] for ix in self.valid_anchors_idx])
+        
+        head_layers = [head_0, head_1, head_2, head_3, head_4, head_5, head_6, head_7, head_8, head_9, head_10, head_11, head_12, head_13, detect_layer]
+        
+        layers = [*bkbo_layers, *head_layers]
+        self.model = nn.Sequential(*layers)
         self._set_layers_attr()
 
-    def _set_layers_attr(self, profile=False):
-        for idx, m in enumerate(self.model):
-            t = str(m.__class__)[8:-2].replace('__main__.', '')  # module type
-            np = sum([x.numel() for x in m.parameters()])  # number params
-            m.i, m.f, m.type, m.np = idx, HEAD_PARAMS[idx][0], t, np
-            
-            if profile:
-                print(f"{m.i}\t{m.f}\t{m.np}\t{ m.type}".expandtabs(16))
-
-    def forward(self, bkbo_fpn_feats, profile=False):
-        x = bkbo_fpn_feats[-1]          ## 最后一层
+    def forward(self, x, profile=False):
         pyramid_feats = {}
-        for idx, v in enumerate(bkbo_fpn_feats):
-            pyramid_feats[fpn_names[idx]] = v
         pyramid_feats['h0'], pyramid_feats['h1'] = None, None
+        pyramid_feats['p1'], pyramid_feats['p2'], pyramid_feats['p3'] = None, None, None
         pyramid_feats['d1'], pyramid_feats['d2'], pyramid_feats['d3'] = None, None, None
         
         for idx, m in enumerate(self.model):
@@ -161,15 +169,22 @@ class YoloV5Head(nn.Module):
                 x = [x if j == -1 else pyramid_feats[j] for j in m.f]
             x = m(x)
             
-            if idx == 0:
-                pyramid_feats['h0'] = x
             if idx == 4:
-                pyramid_feats['h1'] = x  
-            if idx == 7:
-                pyramid_feats['d1'] = x
+                pyramid_feats['p1'] = x
+            if idx == 6:
+                pyramid_feats['p2'] = x
+            if idx == 8:
+                pyramid_feats['p3'] = x
+            
             if idx == 10:
+                pyramid_feats['h0'] = x
+            if idx == 14:
+                pyramid_feats['h1'] = x  
+            if idx == 17:
+                pyramid_feats['d1'] = x
+            if idx == 20:
                 pyramid_feats['d2'] = x
-            if idx == 13:
+            if idx == 23:
                 pyramid_feats['d3'] = x
                 
             if profile:         ## print input output info
@@ -180,7 +195,7 @@ class YoloV5Head(nn.Module):
                 print(f"model_idx:{idx:02d}{'':8}model_type:{m.type}\tinput_shape:{in_shape}{'':4}output_shape:{out_shape}".expandtabs(36))
         del pyramid_feats
         return x
-    
+
     def update_head_params(self):
         detect_fpns = ['d1', 'd2', 'd3']
         self.head_params[-1][0] = [detect_fpns[ix] for ix in self.valid_anchors_idx]
@@ -190,16 +205,31 @@ class YoloV5Head(nn.Module):
         valid_a_idx_lst = []
         new_anchors = []
         for i, a in enumerate(anchors):
-            if a is not None and not isinstance(a, str):
+            if a is not None:
                 valid_a_n += 1
                 valid_a_idx_lst.append(i)
                 new_anchors.append(a)
         assert len(set([len(na) for na in new_anchors])) == 1, 'Invalid anchors param with different shape for different fpn layer'
         return new_anchors, valid_a_idx_lst, valid_a_n
+    
+    def _set_layers_attr(self, profile=False):
+        for idx, m in enumerate(self.model):
+            t = str(m.__class__)[8:-2].replace('__main__.', '')  # module type
+            np = sum([x.numel() for x in m.parameters()])  # number params
+            m.i, m.f, m.type, m.np = idx, self.head_params[idx][0], t, np
+            
+            if profile:
+                print(f"{m.i}\t{m.f}\t{m.np}\t{ m.type}".expandtabs(16))
 
 
 if __name__ == '__main__':
-    pyramid_feats = [torch.rand(8,128,80,80), torch.rand(8,256,40,40), torch.rand(8,512,20,20)]
-    head = YoloV5Head(variant='s', nc=80, in_fpn_feats=pyramid_feats, anchors=ANCHORS1_2)
-    output = head(pyramid_feats)
-    print(*[v.shape for v in output], sep='\n')
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # Create model
+    img = torch.rand(8 if torch.cuda.is_available() else 1, 3, 640, 640)
+    model = zolo(variant='p', anchors=ANCHORS1_0)
+    cal_flops(model, input_size=640, batch_size=1)
+    fpn_feats = model(img)
+    print(*[v.shape for v in fpn_feats], sep='\n')
+    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
+    model_info(model, verbose=True, img_size=640)

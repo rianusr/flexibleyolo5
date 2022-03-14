@@ -8,32 +8,62 @@
 #                   P         R     mAP.5 mAP.5:.95       box       obj       cls
 # Metrics:        0.6     0.936     0.896     0.684    0.0115   0.00805   0.00146
 
-lr0: 0.0032
-lrf: 0.12
-momentum: 0.843
-weight_decay: 0.00036
-warmup_epochs: 2.0
-warmup_momentum: 0.5
-warmup_bias_lr: 0.05
-box: 0.0296
-cls: 0.243
-cls_pw: 0.631
-obj: 0.301
-obj_pw: 0.911
-iou_t: 0.2
-anchor_t: 2.91
-# anchors: 3.63
-fl_gamma: 0.0
-hsv_h: 0.0138
-hsv_s: 0.664
-hsv_v: 0.464
-degrees: 0.373
-translate: 0.245
-scale: 0.898
-shear: 0.602
-perspective: 0.0
-flipud: 0.00856
-fliplr: 0.5
-mosaic: 1.0
-mixup: 0.243
-copy_paste: 0.0
+## common hyps
+lr0: 0.0032  # initial learning rate (SGD=1E-2, Adam=1E-3)
+lrf: 0.12  # final OneCycleLR learning rate (lr0 * lrf)
+weight_decay: 0.00036  # optimizer weight decay 5e-4
+warmup_epochs: 2.0  # warmup epochs (fractions ok)
+warmup_momentum: 0.5  # warmup initial momentum
+warmup_bias_lr: 0.05  # warmup initial bias lr
+box: 0.0296  # box loss gain
+cls: 0.243  # cls loss gain
+cls_pw: 0.631  # cls BCELoss positive_weight
+obj: 0.301  # obj loss gain (scale with pixels)
+obj_pw: 0.911  # obj BCELoss positive_weight
+iou_t: 0.20  # IoU training threshold
+anchor_t: 2.91  # anchor-multiple threshold
+fl_gamma: 0.0  # focal loss gamma (efficientDet default gamma=1.5)
+hsv_h: 0.0138  # image HSV-Hue augmentation (fraction)
+hsv_s: 0.664  # image HSV-Saturation augmentation (fraction)
+hsv_v: 0.464  # image HSV-Value augmentation (fraction)
+translate: 0.245  # image translation (+/- fraction)
+scale: 0.898  # image scale (+/- gain)
+perspective: 0.0  # image perspective (+/- fraction), range 0-0.001
+flipud: 0.00856  # image flip up-down (probability)
+fliplr: 0.5  # image flip left-right (probability)
+mosaic: 1.0  # image mosaic (probability)
+mixup: 0.243  # image mixup (probability)
+copy_paste: 0.0  # segment copy-paste (probability)
+degrees: 0.373  # image rotation (+/- deg)
+shear: 0.602  # image shear (+/- deg)
+
+## yolo5 hyps
+yolo5_momentum: 0.843  # SGD momentum/Adam beta1
+anchors_fpn: [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
+# ANCHORS1_0   = [[10, 13, 16, 30], None, None]
+# ANCHORS1_1   = [None, [30, 61, 62, 45], None]
+# ANCHORS1_2   = [None, None, [116, 90, 156, 198]]
+# ANCHORS2_0_1 = [[30, 61], [116, 90], None]
+# ANCHORS2_0_2 = [[10, 13], None, [116, 90]]
+# ANCHORS2_1_2 = [None, [30, 61], [116, 90]]
+# ANCHORS3     = [[10, 13], [30,  61], [116, 90]]
+# ANCHORS      = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
+
+## yolox hyps
+basic_lr_per_img: 0.00015625 ## 0.01 / 64
+yolox_momentum: 0.9    # SGD momentum/Adam beta1
+yolox_ema_decay: 0.9998
+yolo5_ema_decay: 0.999
+scheduler: 'yoloxwarmcos'
+confthre: 0.001
+nmsthre: 0.65
+flip_prob: 0.0
+hsv_prob: 1.0
+mosaic_scale: [0.1, 2.0]
+mixup_scale: [0.5, 1.5]
+enable_mixup: True
+mosaic_prob: 1.0
+mixup_prob: 1.0
+warmup_lr_start: 0  # warmup epochs (fractions ok)
+min_lr_ratio: 0.05  # warmup epochs (fractions ok)
+no_aug_epochs: 2  # warmup epochs (fractions ok)
