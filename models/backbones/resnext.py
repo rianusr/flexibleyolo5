@@ -87,6 +87,7 @@ class ResNeXtBackbone(nn.Module):
         return nn.Sequential(conv1, bn1, relu, maxpool)
     
     def _make_layer(self, channel, blocks, stride=1):
+        downsample = None
         if(stride != 1 or self.in_channel != channel*BottleNeck.expansion):
             downsample = nn.Conv2d(self.in_channel, channel*BottleNeck.expansion, stride=stride, kernel_size=1, bias=False)
         layers = []
@@ -100,8 +101,11 @@ class ResNeXtBackbone(nn.Module):
 if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    img = torch.rand((8, 3, 640, 640)).cuda()
-    model = ResNeXtBackbone(variant='s').cuda()
-    fpn_feats = model(img)
-    print(*[v.shape for v in fpn_feats], sep='\n')
-    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
+    variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
+    input_size = 384 
+    img = torch.randn(1, 3, input_size, input_size).cuda()
+    for va in variants:
+        model = ResNeXtBackbone(variant=va).cuda()
+        fpn_feats = model(img)
+        print(*[v.shape for v in fpn_feats], sep='\n')
+        print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

@@ -17,7 +17,7 @@ from models.common import Conv
 PARAMS = {
     ##       L                              D 
     'p': {'depths': [3, 3, 9,  3], 'dims': [32,  64,  128,  256]},      ## pico 
-    'n': {'depths': [3, 3, 9,  3], 'dims': [64,  96,  192,  384]},      ## nano 
+    'n': {'depths': [3, 3, 9,  3], 'dims': [48,  96,  192,  384]},      ## nano 
     'm': {'depths': [3, 3, 9,  3], 'dims': [64,  128, 256,  512]},      ## micro
     't': {'depths': [3, 3, 9,  3], 'dims': [96,  192, 384,  768]},      ## tiny
     's': {'depths': [3, 3, 27, 3], 'dims': [96,  192, 384,  768]},      ## small
@@ -160,8 +160,11 @@ class ConvNeXtBackbone(nn.Module):
 if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    img = torch.randn(1, 3, 640, 640)
-    model = ConvNeXtBackbone(variant='p')
-    fpn_feats = model(img)
-    print(*[v.shape for v in fpn_feats], sep='\n')
-    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
+    variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
+    input_size = 384 
+    img = torch.randn(1, 3, input_size, input_size).cuda()
+    for va in variants:
+        model = ConvNeXtBackbone(variant=va).cuda()
+        fpn_feats = model(img)
+        print(*[v.shape for v in fpn_feats], sep='\n')
+        print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

@@ -217,6 +217,7 @@ class CoAtNetBackbone(nn.Module):
         channels   = PARAMS[variant]['channels']
         
         ih, iw = image_size
+        
         block = {'C': MBConv, 'T': Transformer}
         self.focus = Conv(in_channels, focus_ch, 6, 2, 2) if focus_ch > 3 else nn.Identity()
         if not isinstance(self.focus, nn.Identity):
@@ -252,8 +253,11 @@ class CoAtNetBackbone(nn.Module):
 if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    img = torch.randn(1, 3, 640, 640)
-    model = CoAtNetBackbone(variant='p', image_size=(640, 640))
-    fpn_feats = model(img)
-    print(*[v.shape for v in fpn_feats], sep='\n')
-    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
+    variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
+    input_size = 384 
+    img = torch.randn(1, 3, input_size, input_size).cuda()
+    for va in variants:
+        model = CoAtNetBackbone(variant=va, image_size=(input_size, input_size)).cuda()
+        fpn_feats = model(img)
+        print(*[v.shape for v in fpn_feats], sep='\n')
+        print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

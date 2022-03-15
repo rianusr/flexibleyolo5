@@ -130,7 +130,7 @@ class SABlock(nn.Module):
         self.ls = layer_scale
         if self.ls:
             global init_value
-            print(f"Use layer_scale: {layer_scale}, init_values: {init_value}")
+            # print(f"Use layer_scale: {layer_scale}, init_values: {init_value}")
             self.gamma_1 = nn.Parameter(init_value * torch.ones((dim)),requires_grad=True)
             self.gamma_2 = nn.Parameter(init_value * torch.ones((dim)),requires_grad=True)
 
@@ -350,8 +350,11 @@ def build_UniFormer(variant='b', input_size=640, pretrained=True, **kwargs):
 if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    model = UniFormerBackbone(variant='p', img_size=640)
-    x = torch.rand(8, 3, 640, 640)
-    fpn_feats = model(x)
-    print(*[v.shape for v in fpn_feats], sep='\n')
-    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
+    variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
+    input_size = 384 
+    img = torch.randn(1, 3, input_size, input_size).cuda()
+    for va in variants:
+        model = UniFormerBackbone(variant=va, img_size=input_size).cuda()
+        fpn_feats = model(img)
+        print(*[v.shape for v in fpn_feats], sep='\n')
+        print(f'params: {count_parameters(model)/(1024*1024):.2f} M')

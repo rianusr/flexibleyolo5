@@ -3,6 +3,8 @@ import sys
 import math
 import json
 import numpy as np
+from thop import profile
+from copy import deepcopy
 
 import torch
 import torch.nn as nn
@@ -29,9 +31,57 @@ ANCHORS3     = [[10, 13], [30,  61], [116, 90]]
 ANCHORS      = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
 
 
+def get_model_info(model, tsize):
+    stride = 32
+    img = torch.zeros((1, 3, *tsize), device=next(model.parameters()).device)
+    flops, params = profile(deepcopy(model), inputs=(img,), verbose=False)
+    params /= 1e6
+    flops /= 1e9
+    flops *= tsize[0] * tsize[1] / stride / stride * 2  # Gflops
+    info = "Params: {:.2f}M\tflops: {:.2f}G".format(params, flops)
+    return info, params, flops
+
+
+def cal_flops_for_flexibleyolo5():
+    bkbos = ['yolo5', 'resnext', 'coatnet', 'convnext', 'uniformer']
+    variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
+    heads = ['yolo5-n', 'yolo5-s', 'yolo5-m', 'yolo5-l', 'yolo5-x', 'yolox-n', 'yolox-s', 'yolox-m', 'yolox-l', 'yolox-x']
+    inputs = [320, 384, 448, 512, 576, 640]
+    record_f = open('/tmp/flexible_yolo5_flops.txt', 'w')
+    record_f.write(f'backbone\thead\tinput_size\tparams(M)\tflops(G)\n')
+    #! for normal backbones
+    for ip in inputs:
+        for head in heads:
+            for bkbo in [f'{b}-{v}'for b in bkbos for v in variants]:
+                if 'yolo5' in bkbo and bkbo not in ['yolo5-s', 'yolo5-n']:
+                    continue
+                model = FlexibleYolo5(bkbo_variant=bkbo, head_variant=head, nc=2, input_size=ip, anchors=ANCHORS)
+                info, params, flops = get_model_info(model, (ip, ip))
+                print(f"bkbo:{bkbo}\thead:{head}\tinput:{ip}\tinfo:{info}")
+                record_f.write(f"{bkbo}\t{head}\t{ip}\t{params:3f}\t{flops:.5f}\n")
+    #! for swin backbones
+    for head in heads:
+        for bkbo in ['swin_transformer', 'swin_mlp']:
+            for var in variants:
+                if var in ['p', 'n']:
+                    inputs = [256, 512]
+                else:
+                    inputs = [320, 640]
+                for ip in inputs:
+                    model = FlexibleYolo5(bkbo_variant=f'{bkbo}-{var}', head_variant=head, nc=2, input_size=ip, anchors=ANCHORS)
+                    info, params, flops = get_model_info(model, (ip, ip))
+                    print(f"bkbo:{bkbo}\thead:{head}\tinput:{ip}\tinfo:{info}")
+                    record_f.write(f"{bkbo}\t{head}\t{ip}\t{params:3f}\t{flops:.5f}\n")
+    record_f.close()
+    exit()
+
+
 class FlexibleYolo5(nn.Module):
     def __init__(self, bkbo_variant='yolo5-x', head_variant='x', nc=80, input_size=640, anchors=ANCHORS3, inplace=True):  # model, input channels, number of classes
         super(FlexibleYolo5, self).__init__()
+        bkbo_str = bkbo_variant.split('-')[0]
+        if bkbo_str in ['coatnet']:
+            assert input_size % 64 == 0, f'Cause of attention, input img-size for {bkbo_str} must be times of 64'
         self.input_size = input_size
         self.anchors = anchors
         self.inplace = inplace
@@ -76,9 +126,9 @@ class FlexibleYolo5(nn.Module):
         elif 'uniformer' in bkbo_variant.lower():
             backbone = UniFormerBackbone(variant=bkbo_variant.split('-')[-1], img_size=input_size)
         elif 'swin_transformer' in bkbo_variant.lower():
-            backbone = SwinTransformerBackbone(variant=bkbo_variant.split('-')[-1])
+            backbone = SwinTransformerBackbone(variant=bkbo_variant.split('-')[-1], input_size=input_size)
         elif 'swin_mlp' in bkbo_variant.lower():
-            backbone = SwinMLPBackbone(variant=bkbo_variant.split('-')[-1])
+            backbone = SwinMLPBackbone(variant=bkbo_variant.split('-')[-1], input_size=input_size)
         else:
             raise ValueError(f'Only {__all_backbones__} are accepted!')
         return backbone
@@ -174,15 +224,13 @@ def build_model(num_classes, input_size, bkbo_variant, head_variant, hyp, device
 
 
 if __name__ == '__main__':
-    bkbo_variant = 'yolo5-s'
-    head_variant = 'yolo5-s'
+    # cal_flops_for_flexibleyolo5()
+    
+    bkbo_variant = 'yolo5-n'
+    head_variant = 'yolo5-n'
     # Create model
-    model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=80, input_size=640, anchors=ANCHORS2_0_2)
-    # print('\n==============================\n')
-    # model_state_dict = model.state_dict()
-    # for idx, key in enumerate(model_state_dict):
-    #     print(f"{idx:3d}    {key}\t{model_state_dict[key].shape}".expandtabs(64))
-    # exit()
+    model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=80, input_size=416, anchors=ANCHORS2_0_2)
+    
     model.info(verbose=False)
     print(sum(p.numel() for p in model.parameters() if p.requires_grad))
     model = model.cuda()

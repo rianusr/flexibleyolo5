@@ -199,7 +199,7 @@ class YoloV5Head(nn.Module):
 
 
 if __name__ == '__main__':
-    pyramid_feats = [torch.rand(8,128,80,80), torch.rand(8,256,40,40), torch.rand(8,512,20,20)]
+    pyramid_feats = [torch.rand(8,96,80,80), torch.rand(8,192,40,40), torch.rand(8,384,20,20)]
     head = YoloV5Head(variant='s', nc=80, in_fpn_feats=pyramid_feats, anchors=ANCHORS1_2)
     output = head(pyramid_feats)
     print(*[v.shape for v in output], sep='\n')

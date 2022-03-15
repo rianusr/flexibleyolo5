@@ -18,14 +18,14 @@ sys.path.append(os.path.dirname(__file__).replace('models/backbones', ''))
 from models.common import Conv
 
 PARAMS = {
-    'p': {'drop_path_rate':0.2, 'embed_dim':32,  'window_size':10, 'depths':[2, 2, 8, 2],  'input_size':320, 'num_heads':[2, 4, 8, 16]},     ## pico
-    'n': {'drop_path_rate':0.2, 'embed_dim':48,  'window_size':10, 'depths':[2, 2, 8, 2],  'input_size':320, 'num_heads':[2, 4, 8, 16]},     ## nano
-    'm': {'drop_path_rate':0.2, 'embed_dim':48,  'window_size':10, 'depths':[2, 2, 12, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## micro
-    't': {'drop_path_rate':0.5, 'embed_dim':64,  'window_size':10, 'depths':[2, 2, 12, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## tiny
-    's': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## small
-    'l': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[8, 16, 32, 64]},   ## large
-    'h': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'input_size':320, 'num_heads':[16, 32, 64, 128]}, ## huge
-    'g': {'drop_path_rate':0.5, 'embed_dim':128, 'window_size':10, 'depths':[2, 2, 18, 2], 'input_size':320, 'num_heads':[4, 8, 16, 32]},    ## giant
+    'p': {'drop_path_rate':0.2, 'embed_dim':32,  'window_size':8,  'depths':[2, 2, 8, 2],  'num_heads':[2, 4, 8, 16]},     ## pico
+    'n': {'drop_path_rate':0.2, 'embed_dim':48,  'window_size':8,  'depths':[2, 2, 8, 2],  'num_heads':[2, 4, 8, 16]},     ## nano
+    'm': {'drop_path_rate':0.2, 'embed_dim':48,  'window_size':10, 'depths':[2, 2, 12, 2], 'num_heads':[4, 8, 16, 32]},    ## micro
+    't': {'drop_path_rate':0.5, 'embed_dim':64,  'window_size':10, 'depths':[2, 2, 12, 2], 'num_heads':[4, 8, 16, 32]},    ## tiny
+    's': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'num_heads':[4, 8, 16, 32]},    ## small
+    'l': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'num_heads':[8, 16, 32, 64]},   ## large
+    'h': {'drop_path_rate':0.2, 'embed_dim':96,  'window_size':10, 'depths':[2, 2, 6, 2],  'num_heads':[16, 32, 64, 128]}, ## huge
+    'g': {'drop_path_rate':0.5, 'embed_dim':128, 'window_size':10, 'depths':[2, 2, 18, 2], 'num_heads':[4, 8, 16, 32]},    ## giant
     }
 
 
@@ -383,7 +383,7 @@ class SwinMLPBackbone(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
     """
 
-    def __init__(self, variant='', patch_size=4, in_chans=3, mlp_ratio=4., drop_rate=0., focus_ch=32,
+    def __init__(self, variant='', input_size=640, patch_size=4, in_chans=3, mlp_ratio=4., drop_rate=0., focus_ch=32,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, **kwargs):
         super().__init__()
@@ -393,11 +393,13 @@ class SwinMLPBackbone(nn.Module):
         num_heads      = PARAMS[variant]['num_heads']
         window_size    = PARAMS[variant]['window_size']
         drop_path_rate = PARAMS[variant]['drop_path_rate']
-        img_size       = PARAMS[variant]['input_size']
+        img_size       = input_size
+        assert img_size % (32 * window_size) == 0, f'Cause of window size and focus ops, img_size must be times of {32 * window_size}'
         
         self.focus = Conv(3, focus_ch, 6, 2, 2) if focus_ch > 3 else nn.Identity()
         if not isinstance(self.focus, nn.Identity):
             in_chans = focus_ch
+            img_size = img_size // 2
 
         self.num_layers = len(depths)
         self.embed_dim = embed_dim
@@ -489,8 +491,13 @@ class SwinMLPBackbone(nn.Module):
 if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    model = SwinMLPBackbone(variant='t')
-    x = torch.rand(8, 3, 640, 640)
-    fpn_feats = model(x)
-    print(*[v.shape for v in fpn_feats], sep='\n')
-    print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
+    variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
+    for va in variants:
+        input_size = 320 
+        if va in ['p', 'n']:
+            input_size = 256 
+        model = SwinMLPBackbone(variant=va, input_size=input_size)
+        x = torch.rand(8, 3, input_size, input_size)
+        fpn_feats = model(x)
+        print(*[v.shape for v in fpn_feats], sep='\n')
+        print(f'params: {count_parameters(model)/(1024*1024):.2f} M')
