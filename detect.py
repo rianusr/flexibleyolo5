@@ -46,15 +46,6 @@ NAMES = ['background', 'down', 'left', 'others', 'right', 'up', 'bus', 'train', 
         'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
         'hair drier', 'toothbrush'] 
 
-torch.set_printoptions(
-    precision=2,    # 精度，保留小数点后几位，默认4
-    threshold=1000,
-    edgeitems=3,
-    linewidth=150,  # 每行最多显示的字符数，默认80，超过则换行显示
-    profile=None,
-    sci_mode=False  # 用科学技术法显示数据，默认True
-)
-
 
 def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
     for i in range(len(boxes)):
@@ -181,27 +172,7 @@ def postprocess_yolo5(args, pred, imgsz, img_shape):
     return outputs[:, :4], outputs[:, 4], outputs[:, 5]
 
 
-def decode_outputs(outputs, hwsize, m_strides):
-    grids = []
-    strides = []
-    for (hsize, wsize), stride in zip(hwsize, m_strides):
-        yv, xv = torch.meshgrid([torch.arange(hsize), torch.arange(wsize)])
-        grid = torch.stack((xv, yv), 2).view(1, -1, 2)
-        grids.append(grid)
-        shape = grid.shape[:2]
-        strides.append(torch.full((*shape, 1), stride))
-    dtype = torch.float32
-    grids = torch.cat(grids, dim=1).type(dtype)
-    strides = torch.cat(strides, dim=1).type(dtype)
-
-    outputs[..., :2] = (outputs[..., :2] + grids) * strides
-    outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides
-    return outputs
-
-
 def postprocess_yolox(args, outputs, imgsz, img_shape, decoder=None):
-    if args.onnx_infer:
-        outputs = decode_outputs(outputs, args.hwsize, args.stride)
     ratio = min(imgsz[0] / img_shape[0], imgsz[1] / img_shape[1])
     if decoder is not None:
         outputs = decoder(outputs, dtype=outputs.type())
@@ -225,7 +196,6 @@ def parse_config(args, config_file):
         args.stride       = configs['stride']
         args.head_type    = configs['head_type']
         args.agnostic_nms = configs.get('agnostic_nms', True)
-        args.hwsize       = [np.array(args.imgsz) / sd for sd in args.stride]
 
 
 def get_infer_model(args):

@@ -2,7 +2,7 @@
 Author: Rianusr
 Date: 2021-05-24 22:04:57
 LastEditors: Please set LastEditors
-LastEditTime: 2022-03-18 08:43:25
+LastEditTime: 2022-03-18 14:56:09
 FilePath: /nfnets_pytorch/workSpace/yolov5_idt/models/export_deploy.py
 '''
 """Exports a YOLOv5 *.pt model to ONNX and TorchScript formats
@@ -28,7 +28,7 @@ from tactics.activations import Hardswish, SiLU
 
 def update_model_yolox(model):
     model = replace_module(model, nn.SiLU, SiLU)
-    model.head.decode_in_inference = False
+    model.head.decode_in_inference = True
     return model
 
 
@@ -90,19 +90,14 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     print(args)
-    
     t = time.time() 
-
     #! Load PyTorch model
     model = attempt_load(args.weight, map_location=torch.device('cpu'))  # load FP32 model
-    
+    #! Input
+    img = torch.zeros(args.batch_size, 3, *args.img_size)  
     #! Update model
     model, opset_version, head_type = update_model(model)
     get_configs(args, model, head_type)
-    
-    #! Input
-    img = torch.zeros(args.batch_size, 3, *args.img_size)  
-
     try:
         import onnx
         print('\nStarting ONNX export with onnx %s...' % onnx.__version__)
