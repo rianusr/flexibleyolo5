@@ -1,6 +1,7 @@
 import os
 import sys
 import cv2
+import json
 import argparse
 import numpy as np
 from tqdm import tqdm
@@ -20,90 +21,21 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-_COLORS = np.array(
-    [
-        0.000, 0.447, 0.741,
-        0.850, 0.325, 0.098,
-        0.929, 0.694, 0.125,
-        0.494, 0.184, 0.556,
-        0.466, 0.674, 0.188,
-        0.301, 0.745, 0.933,
-        0.635, 0.078, 0.184,
-        0.300, 0.300, 0.300,
-        0.600, 0.600, 0.600,
-        1.000, 0.000, 0.000,
-        1.000, 0.500, 0.000,
-        0.749, 0.749, 0.000,
-        0.000, 1.000, 0.000,
-        0.000, 0.000, 1.000,
-        0.667, 0.000, 1.000,
-        0.333, 0.333, 0.000,
-        0.333, 0.667, 0.000,
-        0.333, 1.000, 0.000,
-        0.667, 0.333, 0.000,
-        0.667, 0.667, 0.000,
-        0.667, 1.000, 0.000,
-        1.000, 0.333, 0.000,
-        1.000, 0.667, 0.000,
-        1.000, 1.000, 0.000,
-        0.000, 0.333, 0.500,
-        0.000, 0.667, 0.500,
-        0.000, 1.000, 0.500,
-        0.333, 0.000, 0.500,
-        0.333, 0.333, 0.500,
-        0.333, 0.667, 0.500,
-        0.333, 1.000, 0.500,
-        0.667, 0.000, 0.500,
-        0.667, 0.333, 0.500,
-        0.667, 0.667, 0.500,
-        0.667, 1.000, 0.500,
-        1.000, 0.000, 0.500,
-        1.000, 0.333, 0.500,
-        1.000, 0.667, 0.500,
-        1.000, 1.000, 0.500,
-        0.000, 0.333, 1.000,
-        0.000, 0.667, 1.000,
-        0.000, 1.000, 1.000,
-        0.333, 0.000, 1.000,
-        0.333, 0.333, 1.000,
-        0.333, 0.667, 1.000,
-        0.333, 1.000, 1.000,
-        0.667, 0.000, 1.000,
-        0.667, 0.333, 1.000,
-        0.667, 0.667, 1.000,
-        0.667, 1.000, 1.000,
-        1.000, 0.000, 1.000,
-        1.000, 0.333, 1.000,
-        1.000, 0.667, 1.000,
-        0.333, 0.000, 0.000,
-        0.500, 0.000, 0.000,
-        0.667, 0.000, 0.000,
-        0.833, 0.000, 0.000,
-        1.000, 0.000, 0.000,
-        0.000, 0.167, 0.000,
-        0.000, 0.333, 0.000,
-        0.000, 0.500, 0.000,
-        0.000, 0.667, 0.000,
-        0.000, 0.833, 0.000,
-        0.000, 1.000, 0.000,
-        0.000, 0.000, 0.167,
-        0.000, 0.000, 0.333,
-        0.000, 0.000, 0.500,
-        0.000, 0.000, 0.667,
-        0.000, 0.000, 0.833,
-        0.000, 0.000, 1.000,
-        0.000, 0.000, 0.000,
-        0.143, 0.143, 0.143,
-        0.286, 0.286, 0.286,
-        0.429, 0.429, 0.429,
-        0.571, 0.571, 0.571,
-        0.714, 0.714, 0.714,
-        0.857, 0.857, 0.857,
-        0.000, 0.447, 0.741,
-        0.314, 0.717, 0.741,
-        0.50, 0.5, 0
-    ]
-).astype(np.float32).reshape(-1, 3)
+_COLORS = np.array([
+    0.000, 0.447, 0.741, 0.850, 0.325, 0.098, 0.929, 0.694, 0.125, 0.494, 0.184, 0.556, 0.466, 0.674, 0.188, 0.301, 0.745, 0.933, 0.635, 0.078, 
+    0.184, 0.300, 0.300, 0.300, 0.600, 0.600, 0.600, 1.000, 0.000, 0.000, 1.000, 0.500, 0.000, 0.749, 0.749, 0.000, 0.000, 1.000, 0.000, 0.000, 
+    0.000, 1.000, 0.667, 0.000, 1.000, 0.333, 0.333, 0.000, 0.333, 0.667, 0.000, 0.333, 1.000, 0.000, 0.667, 0.333, 0.000, 0.667, 0.667, 0.000, 
+    0.667, 1.000, 0.000, 1.000, 0.333, 0.000, 1.000, 0.667, 0.000, 1.000, 1.000, 0.000, 0.000, 0.333, 0.500, 0.000, 0.667, 0.500, 0.000, 1.000, 
+    0.500, 0.333, 0.000, 0.500, 0.333, 0.333, 0.500, 0.333, 0.667, 0.500, 0.333, 1.000, 0.500, 0.667, 0.000, 0.500, 0.667, 0.333, 0.500, 0.667, 
+    0.667, 0.500, 0.667, 1.000, 0.500, 1.000, 0.000, 0.500, 1.000, 0.333, 0.500, 1.000, 0.667, 0.500, 1.000, 1.000, 0.500, 0.000, 0.333, 1.000, 
+    0.000, 0.667, 1.000, 0.000, 1.000, 1.000, 0.333, 0.000, 1.000, 0.333, 0.333, 1.000, 0.333, 0.667, 1.000, 0.333, 1.000, 1.000, 0.667, 0.000, 
+    1.000, 0.667, 0.333, 1.000, 0.667, 0.667, 1.000, 0.667, 1.000, 1.000, 1.000, 0.000, 1.000, 1.000, 0.333, 1.000, 1.000, 0.667, 1.000, 0.333, 
+    0.000, 0.000, 0.500, 0.000, 0.000, 0.667, 0.000, 0.000, 0.833, 0.000, 0.000, 1.000, 0.000, 0.000, 0.000, 0.167, 0.000, 0.000, 0.333, 0.000, 
+    0.000, 0.500, 0.000, 0.000, 0.667, 0.000, 0.000, 0.833, 0.000, 0.000, 1.000, 0.000, 0.000, 0.000, 0.167, 0.000, 0.000, 0.333, 0.000, 0.000, 
+    0.500, 0.000, 0.000, 0.667, 0.000, 0.000, 0.833, 0.000, 0.000, 1.000, 0.000, 0.000, 0.000, 0.143, 0.143, 0.143, 0.286, 0.286, 0.286, 0.429, 
+    0.429, 0.429, 0.571, 0.571, 0.571, 0.714, 0.714, 0.714, 0.857, 0.857, 0.857, 0.000, 0.447, 0.741, 0.314, 0.717, 0.741, 0.50, 0.5, 0]
+    ).astype(np.float32).reshape(-1, 3)
+
 NAMES = ['background', 'down', 'left', 'others', 'right', 'up', 'bus', 'train', 'truck', 'boat', 'traffic light',
         'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
         'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
@@ -113,6 +45,15 @@ NAMES = ['background', 'down', 'left', 'others', 'right', 'up', 'bus', 'train', 
         'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
         'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
         'hair drier', 'toothbrush'] 
+
+torch.set_printoptions(
+    precision=2,    # 精度，保留小数点后几位，默认4
+    threshold=1000,
+    edgeitems=3,
+    linewidth=150,  # 每行最多显示的字符数，默认80，超过则换行显示
+    profile=None,
+    sci_mode=False  # 用科学技术法显示数据，默认True
+)
 
 
 def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
@@ -145,6 +86,7 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
         )
         cv2.putText(img, text, (x0, y0 + txt_size[1]), font, 0.4, txt_color, thickness=1)
     return img
+
 
 def writeXmlForBoxes(xmlFile, boxes):
     with open(xmlFile, 'w') as wf:
@@ -183,6 +125,7 @@ def writeXmlForBoxes(xmlFile, boxes):
             obj_elem.find('bndbox').find('ymax').text = str(ymax)
     output_parse.write(xmlFile)
 
+
 def writeXml(img_shape, boxes, scores, cls_ids, class_names, conf, xml_file):
     boxes_info = []
     height, width = img_shape[:2]
@@ -198,6 +141,7 @@ def writeXml(img_shape, boxes, scores, cls_ids, class_names, conf, xml_file):
         y1 = min(int(box[3]), height)
         boxes_info.append([name, x0, y0, x1, y1, score])
     writeXmlForBoxes(xml_file, boxes_info)
+
 
 def visual(output, img_info, save_result, vis_folder, xml_folder, cls_conf=0.35):
     ratio = img_info["ratio"]
@@ -223,6 +167,8 @@ def visual(output, img_info, save_result, vis_folder, xml_folder, cls_conf=0.35)
 
 def postprocess_yolo5(args, pred, imgsz, img_shape):
     outputs = []
+    if not args.onnx_infer:
+        pred = pred[0]
     pred = non_max_suppression(pred, args.conf_thres, args.iou_thres, agnostic=args.agnostic_nms, max_det=args.max_det)
     for i, det in enumerate(pred):  # per image
         if len(det):
@@ -235,7 +181,27 @@ def postprocess_yolo5(args, pred, imgsz, img_shape):
     return outputs[:, :4], outputs[:, 4], outputs[:, 5]
 
 
+def decode_outputs(outputs, hwsize, m_strides):
+    grids = []
+    strides = []
+    for (hsize, wsize), stride in zip(hwsize, m_strides):
+        yv, xv = torch.meshgrid([torch.arange(hsize), torch.arange(wsize)])
+        grid = torch.stack((xv, yv), 2).view(1, -1, 2)
+        grids.append(grid)
+        shape = grid.shape[:2]
+        strides.append(torch.full((*shape, 1), stride))
+    dtype = torch.float32
+    grids = torch.cat(grids, dim=1).type(dtype)
+    strides = torch.cat(strides, dim=1).type(dtype)
+
+    outputs[..., :2] = (outputs[..., :2] + grids) * strides
+    outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides
+    return outputs
+
+
 def postprocess_yolox(args, outputs, imgsz, img_shape, decoder=None):
+    if args.onnx_infer:
+        outputs = decode_outputs(outputs, args.hwsize, args.stride)
     ratio = min(imgsz[0] / img_shape[0], imgsz[1] / img_shape[1])
     if decoder is not None:
         outputs = decoder(outputs, dtype=outputs.type())
@@ -251,79 +217,130 @@ def postprocess_yolox(args, outputs, imgsz, img_shape, decoder=None):
     return bboxes, scores, cls
 
 
-@torch.no_grad()
+def parse_config(args, config_file):
+    with open(config_file, 'r') as rf:
+        configs           = json.load(rf)
+        args.names        = configs['classes']
+        args.anchors      = configs['anchors']
+        args.stride       = configs['stride']
+        args.head_type    = configs['head_type']
+        args.agnostic_nms = configs.get('agnostic_nms', True)
+        args.hwsize       = [np.array(args.imgsz) / sd for sd in args.stride]
+
+
+def get_infer_model(args):
+    if args.onnx_infer:
+        config_file = os.path.dirname(args.weight) + f'/config.json'
+        import onnxruntime
+        # create session
+        model = onnxruntime.InferenceSession(args.weight)
+        args.onnx_input_name = model.get_inputs()[0].name
+        parse_config(args, config_file)
+    elif args.weight.endswith('.pt') or args.weight.endswith('.pth'):
+        model = torch.load(args.weight, map_location=args.device)['model']
+        args.head_type = str(model.head.__class__).split('.')[2]
+        args.names     = model.module.names if hasattr(model, 'module') else model.names
+        args.stride    = model.stride.cpu().numpy()
+        if 'yolo5' in args.head_type:
+            args.anchors = model.head.model[-1].anchors.cpu().numpy()     ## 实际训练时使用的anchor，尺度分别按照stride进行缩放
+        else:
+            args.anchors = []
+        model = model.half() if args.fp16 else model.float()
+        model.to(args.device)
+        model.eval()
+    args.num_classes = len(args.names)
+    return model
+
+
+def inference(args, model, img):
+    t1 = time_sync()
+    if args.onnx_infer:
+        img = np.ascontiguousarray(img).astype(np.float32)
+        if 'yolo5' in args.head_type:
+            img /= 255.0
+        img = img[np.newaxis, ...]
+        t2 = time_sync()
+        results = model.run([], {args.onnx_input_name: img})
+        pred = torch.from_numpy(results[0])
+        t3 = time_sync()
+    else:
+        img = torch.from_numpy(img).to(args.device)
+        img = img.half() if args.fp16 else img.float()  # uint8 to fp16/32
+        if 'yolo5' in args.head_type:
+            img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)
+        t2 = time_sync()
+        with torch.no_grad():
+            pred = model(img)
+        t3 = time_sync()
+    return pred, t1, t2, t3
+
+
 def detect_run(args):
-    #! Load model
-    device = select_device(args.device)
-    model = torch.load(args.weight, map_location=device)['model']
-    names = model.names
-    args.num_classes = len(names)
-    head_type = str(model.head.__class__).split('.')[2]
-    model.float()
-    model.eval()
+    if args.weight.endswith('.onnx'):
+        logger.info('Flexibleyolo5 inference with onnx model!')
+        args.onnx_infer = True
+    elif args.weight.endswith('.pt') or args.weight.endswith('.pth'):
+        logger.info('Flexibleyolo5 inference with torch model!')
+        args.onnx_infer = False
+    else:
+        raise ValueError(f'Invalid model file: {args.weight}')
     
+    args.device = select_device(args.device)
+    #! Load model
+    model = get_infer_model(args)
+
     #! outputs save dir
-    save_dir = increment_path(Path(args.output) / head_type, exist_ok=False, mkdir=True)
+    save_dir = increment_path(Path(args.output) / args.head_type, exist_ok=False, mkdir=True)
     vis_dir  = save_dir / 'visual_res'
     xml_dir  = save_dir / 'Annotations'
     vis_dir.mkdir(parents=True, exist_ok=True)
     xml_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info(f'     Visual output: {vis_dir}')
     LOGGER.info(f'Annotations output: {xml_dir}')
-    
+
     #! load dataset
-    if head_type == 'yolo5_head':
-        dataset = LoadImages(args.source, img_size=args.imgsz, stride=model.stride, auto=False)
+    if args.head_type == 'yolo5_head':
+        dataset = LoadImages(args.source, img_size=args.imgsz, stride=args.stride, auto=False)
     else:
         dataset = LoadImagesX(args.source, img_size=args.imgsz)
         
-    # Run inference
-    # model.warmup(imgsz=(1, 3, *imgsz), half=half)  # warmup
+    #! Run inference
     dt, seen = [0.0, 0.0, 0.0], 0
-    for path, im, im0, vid_cap, s in tqdm(dataset):
+    for path, im, im0, _, _ in tqdm(dataset):
         img_name = os.path.basename(path)
         
         seen += 1
-        t1 = time_sync()
-        im = torch.from_numpy(im).to(device)
-        im = im.half() if args.fp16 else im.float()  # uint8 to fp16/32
-        if head_type == 'yolo5_head':
-            im /= 255  # 0 - 255 to 0.0 - 1.0
-        if len(im.shape) == 3:
-            im = im[None]  # expand for batch dim
-        t2 = time_sync()
-        dt[0] += t2 - t1
-        
-        #! Inference
-        pred = model(im)
-        t3 = time_sync()
-        dt[1] += t3 - t2
+        #! inference
+        pred, t1, t2, t3 = inference(args, model, im)
         
         #! postprosess
-        if head_type == 'yolo5_head':
-            bboxes, scores, cls = postprocess_yolo5(args, pred[0], args.imgsz, im0.shape)
+        if args.head_type == 'yolo5_head':
+            bboxes, scores, cls = postprocess_yolo5(args, pred, args.imgsz, im0.shape)
         else:
             bboxes, scores, cls = postprocess_yolox(args, pred, args.imgsz, im0.shape)
         
         if bboxes is None:
             continue
+        dt[0] += t2 - t1
+        dt[1] += t3 - t2
         dt[2] += time_sync() - t3
         
         if args.draw_boxes:
-            vis_res = vis(im0, bboxes, scores, cls, args.conf_thres, names)
+            vis_res = vis(im0, bboxes, scores, cls, args.conf_thres, args.names)
             img_out = os.path.join(vis_dir, img_name)
             cv2.imwrite(img_out, vis_res)
         
         if args.save_xml:
             xml_file = img_out = os.path.join(xml_dir, f"{img_name.rsplit('.', 1)[0]}.xml")
-            writeXml(im0.shape, bboxes, scores, cls, names, args.conf_thres, xml_file)
+            writeXml(im0.shape, bboxes, scores, cls, args.names, args.conf_thres, xml_file)
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
     LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms PostProcess per image at shape {(1, 3, *args.imgsz)}' % t)
 
-    #! load dataset
-    
+
 def parse_args(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=str, default='', help='detect source')

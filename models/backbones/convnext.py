@@ -161,7 +161,7 @@ if __name__ == '__main__':
     def count_parameters(model):
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
     variants = ['p', 'n', 'm', 't', 's', 'l', 'h', 'g']
-    input_size = 384 
+    input_size = 640 
     img = torch.randn(1, 3, input_size, input_size).cuda()
     for va in variants:
         model = ConvNeXtBackbone(variant=va).cuda()

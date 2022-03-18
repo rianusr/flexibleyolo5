@@ -89,7 +89,7 @@ class YOLOXHead(nn.Module):
     def __init__(
         self,
         variant='l',
-        num_classes=80,
+        nc=80,
         strides=[8, 16, 32],
         in_channels=[256, 512, 1024],
         act="silu",
@@ -105,7 +105,7 @@ class YOLOXHead(nn.Module):
 
         self.n_anchors = 1
         self.stride = torch.from_numpy(np.array(strides))
-        self.num_classes = num_classes
+        self.num_classes = nc
         self.decode_in_inference = True  # for deploy, set to False
 
         self.cls_convs = nn.ModuleList()
@@ -385,11 +385,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Nfnets dist training script', parents=[get_args_parser()])
     args = parser.parse_args()
 
-    head = YOLOXHead(variant='l', num_classes=80, strides=[8, 16, 32], in_channels=[256, 512, 1024], act="silu", depthwise=False).cuda()
+    head = YOLOXHead(variant='l', nc=80, strides=[8, 16, 32], in_channels=[256, 512, 1024], act="silu", depthwise=False).cuda()
     head.use_l1 = True
     bs = args.batch_size = 4
     
     bkbo_feats = [torch.rand(bs, 256, 80, 80).cuda(), torch.rand(bs, 512, 40, 40).cuda(), torch.rand(bs, 1024, 20, 20).cuda()]
+    head.eval()
     outputs, x_shifts, y_shifts, expanded_strides, origin_preds  = head(bkbo_feats)
     print(outputs[0].shape)
     print(x_shifts[0].shape)

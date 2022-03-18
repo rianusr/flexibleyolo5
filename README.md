@@ -9,9 +9,9 @@ This repo aims to make yolo5 more flexible for not only easy to `change backbone
 ANCHORS      = [[10, 13, 16, 30, 33, 23], [30, 61, 62, 45, 59, 119], [116, 90, 156, 198, 373, 326]]
 
 # flexible anchors
-ANCHORS1_0   = [[10, 13, 16, 30], None, None]  # means: only put anchors on d1 layer, and two anchor for each map point
+ANCHORS1_0   = [[10, 13, 16, 30], None, None]  # means: only put anchors on d1 layer, and two anchors for each map point
 ANCHORS2_0_2 = [[10, 13], None, [116, 90]]     # means: put anchors on d1、d3 layers, and only one anchor for each map point
-ANCHORS3     = [[10, 13], [30,  61], [116, 90]]# means: put one anchor for each map point for all(d1、d2 and d3 ) layers
+ANCHORS3     = [[10, 13], [30,  61], [116, 90]]# means: put one anchor for each map point for all(d1、d2 and d3) layers
 
 # set up flexible anchors
 You can setup your own anchors by modify the param "anchors_fpn" on hyp file (default: data/hyps/hyp.scratch.yaml)!
@@ -61,15 +61,14 @@ python train.py --bkbo_variant yolo5-n --head_variant yolo5-n --batch-size 64
 
 ### Detect
 ```
-python detect.py -- weight path_to_trained_weight --source  path_to_img_file
-                                                            path_to_img_dir
+python detect.py --weight path_to_trained_weight --source path_to_img_file
+                                                          path_to_img_dir
 ```
 
 ### Export onnx
 ```
 python export.py --weight path_to_trained_weight \
                  --img-size 640 640 \
-                 --batch-size 32 \
                  --print-onnx       #! whether to print a human readable model
 ```
 

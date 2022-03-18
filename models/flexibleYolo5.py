@@ -88,24 +88,12 @@ class FlexibleYolo5(nn.Module):
         
         #! build backbone
         self.backbone = self._get_backbone(bkbo_variant, input_size)
-        in_fpn_feats = self._bkbo_forward_once()      ## backbone forward once to get feat_feats
-        
+        in_fpn_feats  = self._bkbo_forward_once()      ## backbone forward once to get feat_feats
         #! build head & detect
-        if 'yolo5' in head_variant.lower():
-            self.head = YoloV5Head(variant=head_variant.split('-')[-1], nc=nc, in_fpn_feats=in_fpn_feats, anchors=self.anchors)
-            #! set stride and anchors
-            self._build_stride_and_anchors()
-            self.stride = self.head.model[-1].stride
-        elif 'yolox' in head_variant.lower():
-            in_channels = [x.shape[1] for x in in_fpn_feats]
-            self.head = YOLOXHead(variant=head_variant.split('-')[-1], num_classes=nc, in_channels=in_channels)
-            self.stride = torch.from_numpy(np.array([8., 16., 32.]))
-        else:
-            raise ValueError(f'Only {__all_heads__} are accepted!')
-
+        self._build_head(head_variant, nc, in_fpn_feats, anchors)
         # Init weights, biases
         initialize_weights(self)
-        
+    
     def forward(self, imgs, labels=None):
         bkbo_fpn_feats = self.backbone(imgs)
         if labels is None:
@@ -132,6 +120,19 @@ class FlexibleYolo5(nn.Module):
         else:
             raise ValueError(f'Only {__all_backbones__} are accepted!')
         return backbone
+    
+    def _build_head(self, head_variant, nc, in_fpn_feats, anchors):
+        if 'yolo5' in head_variant.lower():
+            self.head = YoloV5Head(variant=head_variant.split('-')[-1], nc=nc, in_fpn_feats=in_fpn_feats, anchors=anchors)
+            #! set stride and anchors
+            self._build_stride_and_anchors()
+            self.stride = self.head.model[-1].stride
+        elif 'yolox' in head_variant.lower():
+            in_channels = [x.shape[1] for x in in_fpn_feats]
+            self.head = YOLOXHead(variant=head_variant.split('-')[-1], nc=nc, in_channels=in_channels)
+            self.stride = torch.from_numpy(np.array([8., 16., 32.]))
+        else:
+            raise ValueError(f'Only {__all_heads__} are accepted!')
     
     def _bkbo_forward_once(self):
         x = torch.rand((1, 3, self.input_size, self.input_size))

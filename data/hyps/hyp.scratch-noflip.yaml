@@ -34,7 +34,7 @@ shear: 2.0  # image shear (+/- deg)
 
 ## yolo5 hyps
 yolo5_momentum: 0.937  # SGD momentum/Adam beta1
-anchors_fpn: [None, [30, 61, 62, 45], None]
+anchors_fpn: [None, [30, 61], [116, 90]]
 # ANCHORS1_0   = [[10, 13, 16, 30], None, None]
 # ANCHORS1_1   = [None, [30, 61, 62, 45], None]
 # ANCHORS1_2   = [None, None, [116, 90, 156, 198]]
