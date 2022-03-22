@@ -142,3 +142,4 @@ runs/*
 ## experiments
 data/idt/*
 forCheck/*
+no_exec_*

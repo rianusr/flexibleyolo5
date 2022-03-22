@@ -158,8 +158,6 @@ def visual(output, img_info, save_result, vis_folder, xml_folder, cls_conf=0.35)
 
 def postprocess_yolo5(args, pred, imgsz, img_shape):
     outputs = []
-    if not args.onnx_infer:
-        pred = pred[0]
     pred = non_max_suppression(pred, args.conf_thres, args.iou_thres, agnostic=args.agnostic_nms, max_det=args.max_det)
     for i, det in enumerate(pred):  # per image
         if len(det):

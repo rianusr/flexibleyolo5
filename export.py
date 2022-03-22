@@ -1,15 +1,3 @@
-'''
-Author: Rianusr
-Date: 2021-05-24 22:04:57
-LastEditors: Please set LastEditors
-LastEditTime: 2022-03-18 14:56:09
-FilePath: /nfnets_pytorch/workSpace/yolov5_idt/models/export_deploy.py
-'''
-"""Exports a YOLOv5 *.pt model to ONNX and TorchScript formats
-
-Usage:
-    $ export PYTHONPATH="$PWD" && python models/export.py --weights ./weights/yolov5s.pt --img 640 --batch 1
-"""
 import os
 import sys
 import json
