@@ -8,13 +8,16 @@ from models.common import Conv, C3, Concat
 
 
 fpn_names = ['p1', 'p2', 'p3']
+
 YOLO5_VARIANT = {
-        'n': {'depth_multiple': 0.33, 'width_multiple': 0.25},
-        't': {'depth_multiple': 0.33, 'width_multiple': 0.375},
-        's': {'depth_multiple': 0.33, 'width_multiple': 0.50},
-        'm': {'depth_multiple': 0.67, 'width_multiple': 0.75},
-        'l': {'depth_multiple': 1.0,  'width_multiple': 1.0},
-        'x': {'depth_multiple': 1.33, 'width_multiple': 1.25}
+        'e': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.125},
+        'z': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.25},
+        'p': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.5},
+        'n': {'depth_multiple': 0.33, 'width_multiple': 0.25,  'expansion':0.5},
+        's': {'depth_multiple': 0.33, 'width_multiple': 0.50,  'expansion':0.5},
+        'm': {'depth_multiple': 0.67, 'width_multiple': 0.75,  'expansion':0.5},
+        'l': {'depth_multiple': 1.0,  'width_multiple': 1.0,   'expansion':0.5},
+        'x': {'depth_multiple': 1.33, 'width_multiple': 1.25,  'expansion':0.5},
     }
 
 ANCHORS1_0   = [[10, 13, 16, 30], None, None]
@@ -109,25 +112,26 @@ class YoloV5Head(nn.Module):
         self.update_head_params()
         
         gh = YOLO5_VARIANT[variant]['depth_multiple']
+        expansion = YOLO5_VARIANT[variant]['expansion']
         self.p1_ch, self.p2_ch, self.p3_ch = in_fpn_feats[0].shape[1], in_fpn_feats[1].shape[1], in_fpn_feats[2].shape[1]
         
         ## 8 * 512 * 20 * 20
         head_0 = Conv(self.p3_ch, self.p2_ch, 1, 1)
         head_1 = nn.Upsample(None, 2, 'nearest')
         head_2 = Concat(1)
-        head_3 = C3(self.p3_ch, self.p2_ch, max(round(3 * gh), 1), False)
+        head_3 = C3(self.p3_ch, self.p2_ch, max(round(3 * gh), 1), False, e=expansion)
         head_4 = Conv(self.p2_ch, self.p1_ch, 1, 1)
         head_5 = nn.Upsample(None, 2, 'nearest')
         head_6 = Concat(1)
-        head_7 = C3(self.p2_ch, self.p1_ch, max(round(3 * gh), 1), False)
+        head_7 = C3(self.p2_ch, self.p1_ch, max(round(3 * gh), 1), False, e=expansion)
         fpn_p3_ch = self.p1_ch
         head_8 = Conv(self.p1_ch, self.p1_ch, 3, 2)
         head_9 = Concat(1)
-        head_10 = C3(self.p2_ch, self.p2_ch, max(round(3 * gh), 1), False)
+        head_10 = C3(self.p2_ch, self.p2_ch, max(round(3 * gh), 1), False, e=expansion)
         fpn_p4_ch = self.p2_ch
         head_11 = Conv(self.p2_ch, self.p2_ch, 3, 2)
         head_12 = Concat(1)
-        head_13 = C3(self.p3_ch, self.p3_ch, max(round(3 * gh), 1), False)
+        head_13 = C3(self.p3_ch, self.p3_ch, max(round(3 * gh), 1), False, e=expansion)
         fpn_p5_ch = self.p3_ch
         fpn_chs = (fpn_p3_ch, fpn_p4_ch, fpn_p5_ch)
         detect_layer = Detect(nc=nc, anchors=self.anchors, ch=[fpn_chs[ix] for ix in self.valid_anchors_idx])
