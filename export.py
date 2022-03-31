@@ -45,6 +45,7 @@ def update_model(model):
 
 
 def get_configs(args, model, head_type):
+    model_info = ''
     model_config = {}
 
     labels = model.names
@@ -66,6 +67,14 @@ def get_configs(args, model, head_type):
     with open(config_file, 'w') as wf:
         json.dump(model_config, wf)
         print(f'Configs saved into: {config_file}')
+    
+    for stri, anch in zip(*[stride, anchors_train]):
+        model_info += '-xx'                     ## xx means output_id
+        anc_str = ''
+        for anc in anch:
+            anc_str += '_'.join(map(str, anc))
+        model_info += f'_{stri}_{anc_str}'
+    return model_info
 
 
 if __name__ == '__main__':
@@ -85,11 +94,11 @@ if __name__ == '__main__':
     img = torch.zeros(args.batch_size, 3, *args.img_size)  
     #! Update model
     model, opset_version, head_type = update_model(model)
-    get_configs(args, model, head_type)
+    model_info = get_configs(args, model, head_type)
     try:
         import onnx
         print('\nStarting ONNX export with onnx %s...' % onnx.__version__)
-        f = os.path.join(os.path.dirname(args.weight), os.path.basename(args.weight).replace('.pt', '.onnx'))  # filename
+        f = os.path.join(os.path.dirname(args.weight), os.path.basename(args.weight).replace('.pt', f'{model_info}.onnx'))  # filename
         torch.onnx.export(model, img, f, opset_version=opset_version, input_names=['images'], output_names=['output'])
 
         #! Checks

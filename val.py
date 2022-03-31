@@ -189,7 +189,7 @@ def run(data,
         dt[0] += t2 - t1
 
         # Inference
-        out, train_out = (model(im), []) if training else model(im, augment=augment, val=True)  # inference, loss outputs
+        out, train_out = model(im) if training else model(im, augment=augment, val=True)  # inference, loss outputs
         dt[1] += time_sync() - t2
 
         # Loss
@@ -200,10 +200,7 @@ def run(data,
         targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t3 = time_sync()
-        # out.shape = torch.Size([110, 25200, 85])  out[0] --> [4.5, 4.35156, 9.80469, 13.3047, 0.00118351, 0.121033, 0.117798, 0.124084, 0.140625, 0.125244]
         out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
-        # out --> class <list> 
-        # out[0].shape --> torch.Size([300, 6]) out[0] --> [-83.125, -85.8125, 116.0, 116.812, 0.00225639, 4.0]
         dt[2] += time_sync() - t3
 
         # Metrics
