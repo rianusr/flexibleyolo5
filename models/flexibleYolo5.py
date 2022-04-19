@@ -225,21 +225,24 @@ def build_model(num_classes, input_size, bkbo_variant, head_variant, hyp, device
 
 
 if __name__ == '__main__':
-    # cal_flops_for_flexibleyolo5()
-    
-    bkbo_variant = 'yolo5-n'
-    head_variant = 'yolo5-n'
-    # Create model
-    model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=80, input_size=416, anchors=ANCHORS2_0_2)
-    
-    model.info(verbose=False)
-    print(sum(p.numel() for p in model.parameters() if p.requires_grad))
-    model = model.cuda()
-    img = torch.rand(2 if torch.cuda.is_available() else 1, 3, 640, 640).cuda()
-    model.train()
-    outputs = model(img)
-    for out in outputs:
-        if isinstance(out, list):
-            print(*[v.shape for v in out], sep='\n')
-        else:
-            print(out.shape)
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    for bv in ['e', 'z', 'p', 't']:
+        for hv in ['e', 'z', 'p', 't']:
+            print(f"")
+            bkbo_variant = f'yolo5-{bv}'
+            head_variant = f'yolo5-{bv}'
+            # Create model
+            model = FlexibleYolo5(bkbo_variant=bkbo_variant, head_variant=head_variant, nc=80, input_size=416, anchors=ANCHORS)
+            
+            model.info(verbose=False)
+            model = model.cuda()
+            img = torch.rand(2 if torch.cuda.is_available() else 1, 3, 640, 640).cuda()
+            model.train()
+            # outputs = model(img)
+            # for out in outputs:
+            #     if isinstance(out, list):
+            #         print(*[v.shape for v in out], sep='\n')
+            #     else:
+            #         print(out.shape)
+            print(f'{bv}-{hv} params: {count_parameters(model)/(1024*1024):.4f} M')

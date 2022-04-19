@@ -10,10 +10,10 @@ from models.common import Conv, C3, Concat
 fpn_names = ['p1', 'p2', 'p3']
 
 YOLO5_VARIANT = {
-        'e': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.125},
-        'z': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.25},
-        'p': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.5},
-        'n': {'depth_multiple': 0.33, 'width_multiple': 0.25,  'expansion':0.5},
+        'e': {'depth_multiple': 0.33, 'width_multiple': 0.125, 'expansion':0.25},
+        'z': {'depth_multiple': 0.33, 'width_multiple': 0.25,  'expansion':0.25},
+        'p': {'depth_multiple': 0.33, 'width_multiple': 0.25,  'expansion':0.375},
+        't': {'depth_multiple': 0.33, 'width_multiple': 0.25,  'expansion':0.5},
         's': {'depth_multiple': 0.33, 'width_multiple': 0.50,  'expansion':0.5},
         'm': {'depth_multiple': 0.67, 'width_multiple': 0.75,  'expansion':0.5},
         'l': {'depth_multiple': 1.0,  'width_multiple': 1.0,   'expansion':0.5},
@@ -203,7 +203,10 @@ class YoloV5Head(nn.Module):
 
 
 if __name__ == '__main__':
+    def count_parameters(model):
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
     pyramid_feats = [torch.rand(8,96,80,80), torch.rand(8,192,40,40), torch.rand(8,384,20,20)]
-    head = YoloV5Head(variant='s', nc=80, in_fpn_feats=pyramid_feats, anchors=ANCHORS1_2)
+    head = YoloV5Head(variant='e', nc=80, in_fpn_feats=pyramid_feats, anchors=ANCHORS1_2)
     output = head(pyramid_feats)
     print(*[v.shape for v in output], sep='\n')
+    print(f'params: {count_parameters(head)/(1024*1024):.4f} M')

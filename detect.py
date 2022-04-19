@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 _COLORS = np.array([
-    0.000, 0.447, 0.741, 0.850, 0.325, 0.098, 0.929, 0.694, 0.125, 0.494, 0.184, 0.556, 0.466, 0.674, 0.188, 0.301, 0.745, 0.933, 0.635, 0.078, 
+    0.000, 1.000, 0.000, 0.850, 0.325, 0.098, 0.000, 0.000, 1.000, 0.494, 0.184, 0.556, 0.466, 0.674, 0.188, 0.301, 0.745, 0.933, 0.635, 0.078, 
     0.184, 0.300, 0.300, 0.300, 0.600, 0.600, 0.600, 1.000, 0.000, 0.000, 1.000, 0.500, 0.000, 0.749, 0.749, 0.000, 0.000, 1.000, 0.000, 0.000, 
     0.000, 1.000, 0.667, 0.000, 1.000, 0.333, 0.333, 0.000, 0.333, 0.667, 0.000, 0.333, 1.000, 0.000, 0.667, 0.333, 0.000, 0.667, 0.667, 0.000, 
     0.667, 1.000, 0.000, 1.000, 0.333, 0.000, 1.000, 0.667, 0.000, 1.000, 1.000, 0.000, 0.000, 0.333, 0.500, 0.000, 0.667, 0.500, 0.000, 1.000, 
@@ -65,7 +65,7 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         txt_size = cv2.getTextSize(text, font, 0.4, 1)[0]
-        cv2.rectangle(img, (x0, y0), (x1, y1), color, 2)
+        cv2.rectangle(img, (x0, y0), (x1, y1), color, 3)
 
         txt_bk_color = (_COLORS[cls_id] * 255 * 0.7).astype(np.uint8).tolist()
         cv2.rectangle(
@@ -192,7 +192,7 @@ def parse_config(args, config_file):
         args.names        = configs['classes']
         args.anchors      = configs['anchors']
         args.stride       = configs['stride']
-        args.head_type    = configs['head_type']
+        args.head_type    = configs.get('head_type', 'yolo5_head')
         args.agnostic_nms = configs.get('agnostic_nms', True)
 
 
@@ -241,11 +241,29 @@ def inference(args, model, img):
         t2 = time_sync()
         with torch.no_grad():
             pred = model(img)
+            if isinstance(pred, tuple):
+                pred = pred[0]
         t3 = time_sync()
     return pred, t1, t2, t3
 
 
-def detect_run(args):
+def speed_assessment(args, model, dataset, times=100):
+    dt, seen = [0.0, 0.0, 0.0], 0
+    for idx in range(times):
+        print(f'speed_assessment: >>>> {idx+1}')
+        for _, im, _, _, _ in tqdm(dataset):
+            seen += 1
+            #! inference
+            _, t1, t2, t3 = inference(args, model, im)
+            ## time-consuming add up
+            dt[0] += t2 - t1
+            dt[1] += t3 - t2
+            dt[2] += time_sync() - t3
+    t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
+    LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms PostProcess per image at shape {(1, 3, *args.imgsz)}' % t)
+
+
+def detect_run(args, times=100):
     if args.weight.endswith('.onnx'):
         logger.info('Flexibleyolo5 inference with onnx model!')
         args.onnx_infer = True
@@ -259,6 +277,18 @@ def detect_run(args):
     #! Load model
     model = get_infer_model(args)
 
+    #! load dataset
+    if args.head_type == 'yolo5_head':
+        dataset = LoadImages(args.source, img_size=args.imgsz, stride=args.stride, auto=False)
+    else:
+        dataset = LoadImagesX(args.source, img_size=args.imgsz)
+    
+    if args.speed_assessment:
+        LOGGER.critical(f'Speed_assessment mode: assessment for {times} times!')
+        speed_assessment(args, model, dataset, times=times)
+        LOGGER.info(f'Speed_assessment Done!')
+        return 
+
     #! outputs save dir
     save_dir = increment_path(Path(args.output) / args.head_type, exist_ok=False, mkdir=True)
     vis_dir  = save_dir / 'visual_res'
@@ -267,13 +297,7 @@ def detect_run(args):
     xml_dir.mkdir(parents=True, exist_ok=True)
     LOGGER.info(f'     Visual output: {vis_dir}')
     LOGGER.info(f'Annotations output: {xml_dir}')
-
-    #! load dataset
-    if args.head_type == 'yolo5_head':
-        dataset = LoadImages(args.source, img_size=args.imgsz, stride=args.stride, auto=False)
-    else:
-        dataset = LoadImagesX(args.source, img_size=args.imgsz)
-        
+    
     #! Run inference
     dt, seen = [0.0, 0.0, 0.0], 0
     for path, im, im0, _, _ in tqdm(dataset):
@@ -289,26 +313,30 @@ def detect_run(args):
         else:
             bboxes, scores, cls = postprocess_yolox(args, pred, args.imgsz, im0.shape)
         
-        if bboxes is None:
-            continue
         dt[0] += t2 - t1
         dt[1] += t3 - t2
         dt[2] += time_sync() - t3
         
         if args.draw_boxes:
-            vis_res = vis(im0, bboxes, scores, cls, args.conf_thres, args.names)
-            img_out = os.path.join(vis_dir, img_name)
+            if bboxes is None:
+                vis_res = im0
+                img_out = os.path.join(vis_dir, '0', img_name)
+                if not os.path.exists(os.path.dirname(img_out)):
+                    os.makedirs(os.path.dirname(img_out))
+            else:
+                vis_res = vis(im0, bboxes, scores, cls, args.conf_thres, args.names)
+                img_out = os.path.join(vis_dir, img_name)
             cv2.imwrite(img_out, vis_res)
         
-        if args.save_xml:
+        if args.save_xml and bboxes is not None:
             xml_file = img_out = os.path.join(xml_dir, f"{img_name.rsplit('.', 1)[0]}.xml")
             writeXml(im0.shape, bboxes, scores, cls, args.names, args.conf_thres, xml_file)
 
     # Print results
     t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
     LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms PostProcess per image at shape {(1, 3, *args.imgsz)}' % t)
-
-
+    
+    
 def parse_args(known=False):
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=str, default='', help='detect source')
@@ -323,6 +351,7 @@ def parse_args(known=False):
     parser.add_argument('--iou_thres', type=float, default=0.5, help='training for coco datasets')
     parser.add_argument('--draw_boxes', action='store_true', default=True, help='draw_boxes')
     parser.add_argument('--save_xml', action='store_true', default=True, help='save_xml')
+    parser.add_argument('--speed_assessment', action='store_true', help='speed_assessment')
     
     args = parser.parse_known_args()[0] if known else parser.parse_args()
     return args

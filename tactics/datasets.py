@@ -169,6 +169,17 @@ class _RepeatSampler:
             yield from iter(self.sampler)
 
 
+def getAllImgs(dataDir):
+    IMG_FORMAT = ['jpg', 'png', 'bmp', 'webp', 'JPEG', 'jpeg', 'JPG', 'tif', 'tiff', 'dng']
+    all_imgs = []
+    for root, _, _ in os.walk(dataDir):
+        imgs = []
+        for im_format in IMG_FORMAT:
+            imgs.extend(glob.glob(root + f'/*.{im_format}'))
+        all_imgs.extend(imgs)
+    return all_imgs
+
+
 class LoadImages:
     # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
     def __init__(self, path, img_size=640, stride=32, auto=True):
@@ -176,7 +187,7 @@ class LoadImages:
         if '*' in p:
             files = sorted(glob.glob(p, recursive=True))  # glob
         elif os.path.isdir(p):
-            files = sorted(glob.glob(os.path.join(p, '*.*')))  # dir
+            files = getAllImgs(p)  # dir
         elif os.path.isfile(p):
             files = [p]  # files
         else:
